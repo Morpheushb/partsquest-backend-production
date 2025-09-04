@@ -19,8 +19,7 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
 database_url = os.environ.get('DATABASE_URL')
 if not database_url:
-    # Fallback for deployment environment
-    database_url = 'sqlite:///partsquest.db'
+    raise ValueError("DATABASE_URL environment variable must be set!")
 print(f"DATABASE_URL from environment: {database_url}")
 app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
@@ -44,6 +43,7 @@ class User(db.Model):
     phone = db.Column(db.String(20))
     is_active = db.Column(db.Boolean, default=True)
     subscription_status = db.Column(db.String(20), default='inactive')
+    subscription_tier = db.Column(db.String(50), nullable=True)
     stripe_customer_id = db.Column(db.String(100))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
@@ -62,6 +62,7 @@ class User(db.Model):
             'company': self.company,
             'phone': self.phone,
             'subscription_status': self.subscription_status,
+            'subscription_tier': self.subscription_tier,
             'created_at': self.created_at.isoformat()
         }
 
@@ -132,8 +133,11 @@ def token_required(f):
 def subscription_required(f):
     @wraps(f)
     def decorated(current_user, *args, **kwargs):
-        if current_user.subscription_status not in ['active', 'free']:
-            return jsonify({'error': 'Subscription required to access this feature'}), 403
+        if current_user.subscription_status != 'active':
+            return jsonify({
+                'error': 'Subscription required to access this feature',
+                'redirect': '/subscribe'
+            }), 402  # Payment Required
         
         return f(current_user, *args, **kwargs)
     return decorated
