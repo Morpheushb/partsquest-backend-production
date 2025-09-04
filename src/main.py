@@ -19,8 +19,7 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
 database_url = os.environ.get('DATABASE_URL')
 if not database_url:
-    # Temporary SQLite fallback for deployment
-    database_url = 'sqlite:///partsquest.db'
+    raise RuntimeError("DATABASE_URL environment variable is required!")
 print(f"DATABASE_URL from environment: {database_url}")
 app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
@@ -252,6 +251,19 @@ def login():
 @app.route('/api/profile', methods=['GET'])
 @token_required
 def get_profile(current_user):
+    # Block "free" status users and fix legacy users
+    if current_user.subscription_status == 'free':
+        current_user.subscription_status = 'inactive'  # Fix legacy users
+        db.session.commit()
+    
+    # Only allow 'active' status to access dashboard
+    if current_user.subscription_status != 'active':
+        return jsonify({
+            'error': 'Subscription required',
+            'subscription_status': 'inactive',
+            'redirect': '/subscribe'
+        }), 402
+    
     return jsonify({'user': current_user.to_dict()})
 
 @app.route('/api/profile', methods=['PUT'])
@@ -386,23 +398,6 @@ def stripe_webhook():
             db.session.commit()
     
     return jsonify({'status': 'success'})
-
-@app.route('/api/subscription/free', methods=['POST'])
-@token_required
-def select_free_plan(current_user):
-    try:
-        # Update user to free plan (inactive subscription but allowed access)
-        current_user.subscription_status = 'free'
-        db.session.commit()
-        
-        return jsonify({
-            'message': 'Free plan selected successfully',
-            'user': current_user.to_dict()
-        })
-        
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     # Create tables if they don't exist
