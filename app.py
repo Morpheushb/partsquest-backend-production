@@ -12,7 +12,9 @@ app = Flask(__name__)
 
 # Configuration
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL')
+database_url = os.environ.get('DATABASE_URL')
+print(f"DATABASE_URL from environment: {database_url}")
+app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # Initialize extensions
@@ -129,7 +131,21 @@ def home():
 
 @app.route('/api/health')
 def health_check():
-    return jsonify({'status': 'healthy', 'timestamp': datetime.utcnow().isoformat()})
+    health_status = {
+        'status': 'healthy',
+        'timestamp': datetime.utcnow().isoformat(),
+        'database': 'unknown'
+    }
+    
+    try:
+        # Test database connection
+        db.session.execute('SELECT 1')
+        health_status['database'] = 'connected'
+    except Exception as e:
+        health_status['database'] = f'error: {str(e)}'
+        health_status['status'] = 'unhealthy'
+    
+    return jsonify(health_status)
 
 @app.route('/api/register', methods=['POST'])
 def register():
@@ -346,11 +362,6 @@ def stripe_webhook():
     
     return jsonify({'status': 'success'})
 
-# Initialize database
-@app.before_first_request
-def create_tables():
-    db.create_all()
-
 if __name__ == '__main__':
     # Create tables if they don't exist
     with app.app_context():
@@ -359,4 +370,8 @@ if __name__ == '__main__':
     # Run the app
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
+else:
+    # For production deployment (Gunicorn)
+    with app.app_context():
+        db.create_all()
 
