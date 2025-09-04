@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify, session
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import text
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
 import stripe
@@ -139,7 +140,7 @@ def health_check():
     
     try:
         # Test database connection
-        db.session.execute('SELECT 1')
+        db.session.execute(text('SELECT 1'))
         health_status['database'] = 'connected'
     except Exception as e:
         health_status['database'] = f'error: {str(e)}'
