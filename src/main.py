@@ -18,6 +18,9 @@ app = Flask(__name__)
 # Configuration
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
 database_url = os.environ.get('DATABASE_URL')
+if not database_url:
+    # Fallback for deployment environment
+    database_url = 'sqlite:///partsquest.db'
 print(f"DATABASE_URL from environment: {database_url}")
 app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
