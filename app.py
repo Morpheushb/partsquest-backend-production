@@ -121,6 +121,16 @@ def token_required(f):
         return f(current_user, *args, **kwargs)
     return decorated
 
+# Subscription required decorator
+def subscription_required(f):
+    @wraps(f)
+    def decorated(current_user, *args, **kwargs):
+        if current_user.subscription_status not in ['active', 'free']:
+            return jsonify({'error': 'Subscription required to access this feature'}), 403
+        
+        return f(current_user, *args, **kwargs)
+    return decorated
+
 # Routes
 @app.route('/')
 def home():
@@ -257,6 +267,7 @@ def update_profile(current_user):
 
 @app.route('/api/part-requests', methods=['POST'])
 @token_required
+@subscription_required
 def create_part_request(current_user):
     try:
         data = request.get_json()
@@ -287,6 +298,7 @@ def create_part_request(current_user):
 
 @app.route('/api/part-requests', methods=['GET'])
 @token_required
+@subscription_required
 def get_part_requests(current_user):
     try:
         part_requests = PartRequest.query.filter_by(user_id=current_user.id).order_by(PartRequest.created_at.desc()).all()
@@ -362,6 +374,23 @@ def stripe_webhook():
             db.session.commit()
     
     return jsonify({'status': 'success'})
+
+@app.route('/api/subscription/free', methods=['POST'])
+@token_required
+def select_free_plan(current_user):
+    try:
+        # Update user to free plan (inactive subscription but allowed access)
+        current_user.subscription_status = 'free'
+        db.session.commit()
+        
+        return jsonify({
+            'message': 'Free plan selected successfully',
+            'user': current_user.to_dict()
+        })
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     # Create tables if they don't exist
