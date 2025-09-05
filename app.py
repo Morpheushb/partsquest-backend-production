@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, session
+from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import text
 from flask_cors import CORS
@@ -96,6 +96,43 @@ class PartRequest(db.Model):
             'created_at': self.created_at.isoformat()
         }
 
+class Vehicle(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    vin = db.Column(db.String(17))
+    year = db.Column(db.String(4), nullable=False)
+    make = db.Column(db.String(50), nullable=False)
+    model = db.Column(db.String(50))
+    trim = db.Column(db.String(50))
+    engine = db.Column(db.String(100))
+    transmission = db.Column(db.String(50))
+    mileage = db.Column(db.Integer)
+    nickname = db.Column(db.String(100))
+    license_plate = db.Column(db.String(20))
+    customer_name = db.Column(db.String(100))
+    notes = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'vin': self.vin,
+            'year': self.year,
+            'make': self.make,
+            'model': self.model,
+            'trim': self.trim,
+            'engine': self.engine,
+            'transmission': self.transmission,
+            'mileage': self.mileage,
+            'nickname': self.nickname,
+            'license_plate': self.license_plate,
+            'customer_name': self.customer_name,
+            'notes': self.notes,
+            'created_at': self.created_at.isoformat(),
+            'updated_at': self.updated_at.isoformat()
+        }
+
 # JWT Token Functions
 def generate_token(user_id):
     payload = {
@@ -144,6 +181,34 @@ def subscription_required(f):
         
         return f(current_user, *args, **kwargs)
     return decorated
+
+# Vehicle limit checking
+def get_user_subscription_plan(user):
+    """Get user's subscription plan based on their Stripe subscription"""
+    # This would normally query Stripe, but for now we'll use a simple mapping
+    # based on subscription_status or could be enhanced with actual Stripe data
+    if user.subscription_status == 'active':
+        # For now, assume 'professional' plan for active users
+        # This should be enhanced to get actual plan from Stripe
+        return 'professional'
+    return 'test'
+
+def check_vehicle_limit(user):
+    """Check if user can add more vehicles based on their subscription plan"""
+    vehicle_count = Vehicle.query.filter_by(user_id=user.id).count()
+    
+    limits = {
+        'test': 1,
+        'starter': 10,
+        'professional': 25,
+        'fleet': 50,
+        'enterprise': float('inf')
+    }
+    
+    user_plan = get_user_subscription_plan(user)
+    limit = limits.get(user_plan, 1)
+    
+    return vehicle_count < limit, vehicle_count, limit
 
 # NUCLEAR BACKEND PROTECTION - Block revenue leak at API level
 @app.before_request
@@ -472,30 +537,274 @@ else:
 
 # Admin endpoints for debugging and fixing subscription statuses
 @app.route('/api/admin/check-users', methods=['GET'])
-def check_user_statuses():
-    """Check all user subscription statuses"""
+def check_users():
+    """Check all users and their subscription status"""
     try:
         users = User.query.all()
         user_data = []
-        status_counts = {}
         
         for user in users:
-            status = user.subscription_status
-            status_counts[status] = status_counts.get(status, 0) + 1
             user_data.append({
                 'id': user.id,
                 'email': user.email,
-                'subscription_status': status,
-                'created_at': user.created_at.isoformat() if user.created_at else None
+                'subscription_status': user.subscription_status,
+                'created_at': user.created_at.isoformat()
             })
         
         return jsonify({
             'total_users': len(users),
-            'status_counts': status_counts,
             'users': user_data
         })
         
     except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# Vehicle Management API Endpoints
+
+@app.route('/api/vehicles', methods=['GET'])
+@token_required
+def get_vehicles(current_user):
+    """Get all vehicles for the current user"""
+    try:
+        vehicles = Vehicle.query.filter_by(user_id=current_user.id).order_by(Vehicle.created_at.desc()).all()
+        return jsonify({
+            'vehicles': [vehicle.to_dict() for vehicle in vehicles],
+            'count': len(vehicles)
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/vehicles', methods=['POST'])
+@token_required
+def create_vehicle(current_user):
+    """Create a new vehicle"""
+    try:
+        # Check vehicle limit
+        can_add, current_count, limit = check_vehicle_limit(current_user)
+        if not can_add:
+            return jsonify({
+                'error': f'Vehicle limit reached. Your plan allows {limit} vehicles, you currently have {current_count}.',
+                'current_count': current_count,
+                'limit': limit
+            }), 403
+        
+        data = request.get_json()
+        
+        # Validate required fields
+        if not data.get('year') or not data.get('make'):
+            return jsonify({'error': 'Year and make are required'}), 400
+        
+        vehicle = Vehicle(
+            user_id=current_user.id,
+            vin=data.get('vin', '').upper() if data.get('vin') else None,
+            year=data.get('year'),
+            make=data.get('make'),
+            model=data.get('model'),
+            trim=data.get('trim'),
+            engine=data.get('engine'),
+            transmission=data.get('transmission'),
+            mileage=data.get('mileage'),
+            nickname=data.get('nickname'),
+            license_plate=data.get('license_plate'),
+            customer_name=data.get('customer_name'),
+            notes=data.get('notes')
+        )
+        
+        db.session.add(vehicle)
+        db.session.commit()
+        
+        return jsonify({
+            'message': 'Vehicle created successfully',
+            'vehicle': vehicle.to_dict()
+        }), 201
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/vehicles/<int:vehicle_id>', methods=['PUT'])
+@token_required
+def update_vehicle(current_user, vehicle_id):
+    """Update a vehicle"""
+    try:
+        vehicle = Vehicle.query.filter_by(id=vehicle_id, user_id=current_user.id).first()
+        if not vehicle:
+            return jsonify({'error': 'Vehicle not found'}), 404
+        
+        data = request.get_json()
+        
+        # Update fields
+        if 'vin' in data:
+            vehicle.vin = data['vin'].upper() if data['vin'] else None
+        if 'year' in data:
+            vehicle.year = data['year']
+        if 'make' in data:
+            vehicle.make = data['make']
+        if 'model' in data:
+            vehicle.model = data['model']
+        if 'trim' in data:
+            vehicle.trim = data['trim']
+        if 'engine' in data:
+            vehicle.engine = data['engine']
+        if 'transmission' in data:
+            vehicle.transmission = data['transmission']
+        if 'mileage' in data:
+            vehicle.mileage = data['mileage']
+        if 'nickname' in data:
+            vehicle.nickname = data['nickname']
+        if 'license_plate' in data:
+            vehicle.license_plate = data['license_plate']
+        if 'customer_name' in data:
+            vehicle.customer_name = data['customer_name']
+        if 'notes' in data:
+            vehicle.notes = data['notes']
+        
+        vehicle.updated_at = datetime.utcnow()
+        db.session.commit()
+        
+        return jsonify({
+            'message': 'Vehicle updated successfully',
+            'vehicle': vehicle.to_dict()
+        })
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/vehicles/<int:vehicle_id>', methods=['DELETE'])
+@token_required
+def delete_vehicle(current_user, vehicle_id):
+    """Delete a vehicle"""
+    try:
+        vehicle = Vehicle.query.filter_by(id=vehicle_id, user_id=current_user.id).first()
+        if not vehicle:
+            return jsonify({'error': 'Vehicle not found'}), 404
+        
+        db.session.delete(vehicle)
+        db.session.commit()
+        
+        return jsonify({'message': 'Vehicle deleted successfully'})
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/vehicles/vin-decode', methods=['POST'])
+@token_required
+def decode_vin(current_user):
+    """Decode VIN using NHTSA API"""
+    try:
+        data = request.get_json()
+        vin = data.get('vin', '').replace(' ', '').upper()
+        
+        if len(vin) != 17:
+            return jsonify({'error': 'VIN must be exactly 17 characters'}), 400
+        
+        # Call NHTSA API
+        import requests
+        response = requests.get(
+            f'https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValues/{vin}?format=json',
+            timeout=10
+        )
+        
+        if response.status_code != 200:
+            return jsonify({'error': 'Failed to decode VIN'}), 500
+        
+        nhtsa_data = response.json()
+        
+        if not nhtsa_data.get('Results') or not nhtsa_data['Results'][0]:
+            return jsonify({'error': 'VIN not found in database'}), 404
+        
+        result = nhtsa_data['Results'][0]
+        
+        # Extract relevant data
+        vehicle_data = {
+            'vin': vin,
+            'year': result.get('ModelYear', ''),
+            'make': result.get('Make', ''),
+            'model': result.get('Model', ''),
+            'trim': result.get('Trim', ''),
+            'engine': result.get('EngineModel', ''),
+            'transmission': result.get('TransmissionStyle', ''),
+            'body_class': result.get('BodyClass', ''),
+            'fuel_type': result.get('FuelTypePrimary', '')
+        }
+        
+        return jsonify({
+            'message': 'VIN decoded successfully',
+            'vehicle_data': vehicle_data
+        })
+        
+    except requests.RequestException as e:
+        return jsonify({'error': f'Failed to connect to VIN decoder: {str(e)}'}), 500
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/vehicles/bulk', methods=['POST'])
+@token_required
+def bulk_create_vehicles(current_user):
+    """Create multiple vehicles from CSV data"""
+    try:
+        data = request.get_json()
+        vehicles_data = data.get('vehicles', [])
+        
+        if not vehicles_data:
+            return jsonify({'error': 'No vehicle data provided'}), 400
+        
+        # Check if adding these vehicles would exceed limit
+        can_add, current_count, limit = check_vehicle_limit(current_user)
+        if current_count + len(vehicles_data) > limit:
+            return jsonify({
+                'error': f'Adding {len(vehicles_data)} vehicles would exceed your limit of {limit}. You currently have {current_count} vehicles.',
+                'current_count': current_count,
+                'limit': limit,
+                'requested': len(vehicles_data)
+            }), 403
+        
+        created_vehicles = []
+        errors = []
+        
+        for i, vehicle_data in enumerate(vehicles_data):
+            try:
+                if not vehicle_data.get('year') or not vehicle_data.get('make'):
+                    errors.append(f'Row {i+1}: Year and make are required')
+                    continue
+                
+                vehicle = Vehicle(
+                    user_id=current_user.id,
+                    vin=vehicle_data.get('vin', '').upper() if vehicle_data.get('vin') else None,
+                    year=vehicle_data.get('year'),
+                    make=vehicle_data.get('make'),
+                    model=vehicle_data.get('model'),
+                    trim=vehicle_data.get('trim'),
+                    engine=vehicle_data.get('engine'),
+                    transmission=vehicle_data.get('transmission'),
+                    mileage=vehicle_data.get('mileage'),
+                    nickname=vehicle_data.get('nickname'),
+                    license_plate=vehicle_data.get('license_plate'),
+                    customer_name=vehicle_data.get('customer_name'),
+                    notes=vehicle_data.get('notes')
+                )
+                
+                db.session.add(vehicle)
+                created_vehicles.append(vehicle)
+                
+            except Exception as e:
+                errors.append(f'Row {i+1}: {str(e)}')
+        
+        if created_vehicles:
+            db.session.commit()
+        
+        return jsonify({
+            'message': f'Successfully created {len(created_vehicles)} vehicles',
+            'created_count': len(created_vehicles),
+            'error_count': len(errors),
+            'errors': errors,
+            'vehicles': [vehicle.to_dict() for vehicle in created_vehicles]
+        })
+        
+    except Exception as e:
+        db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/admin/fix-subscription-status', methods=['POST'])
@@ -518,4 +827,9 @@ def fix_subscription_status():
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
+
+if __name__ == '__main__':
+    with app.app_context():
+        db.create_all()
+    app.run(host='0.0.0.0', port=5000, debug=True)
 
