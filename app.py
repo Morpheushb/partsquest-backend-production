@@ -15,8 +15,22 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
 database_url = os.environ.get('DATABASE_URL')
 print(f"DATABASE_URL from environment: {database_url}")
+
+# Handle PostgreSQL SSL requirements for Render
+if database_url and database_url.startswith('postgresql://'):
+    database_url = database_url.replace('postgresql://', 'postgresql://', 1)
+    if '?sslmode=' not in database_url:
+        database_url += '?sslmode=require'
+
 app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    'pool_pre_ping': True,
+    'pool_recycle': 300,
+    'connect_args': {
+        'sslmode': 'require'
+    }
+}
 
 # Initialize extensions
 db = SQLAlchemy(app)
@@ -125,8 +139,8 @@ def token_required(f):
 def subscription_required(f):
     @wraps(f)
     def decorated(current_user, *args, **kwargs):
-        if current_user.subscription_status not in ['active', 'free']:
-            return jsonify({'error': 'Subscription required to access this feature'}), 403
+        if current_user.subscription_status != 'active':
+            return jsonify({'error': 'Active subscription required to access this feature'}), 403
         
         return f(current_user, *args, **kwargs)
     return decorated
@@ -374,23 +388,6 @@ def stripe_webhook():
             db.session.commit()
     
     return jsonify({'status': 'success'})
-
-@app.route('/api/subscription/free', methods=['POST'])
-@token_required
-def select_free_plan(current_user):
-    try:
-        # Update user to free plan (inactive subscription but allowed access)
-        current_user.subscription_status = 'free'
-        db.session.commit()
-        
-        return jsonify({
-            'message': 'Free plan selected successfully',
-            'user': current_user.to_dict()
-        })
-        
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     # Create tables if they don't exist
