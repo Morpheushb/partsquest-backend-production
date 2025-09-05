@@ -402,3 +402,53 @@ else:
     with app.app_context():
         db.create_all()
 
+
+# Admin endpoints for debugging and fixing subscription statuses
+@app.route('/api/admin/check-users', methods=['GET'])
+def check_user_statuses():
+    """Check all user subscription statuses"""
+    try:
+        users = User.query.all()
+        user_data = []
+        status_counts = {}
+        
+        for user in users:
+            status = user.subscription_status
+            status_counts[status] = status_counts.get(status, 0) + 1
+            user_data.append({
+                'id': user.id,
+                'email': user.email,
+                'subscription_status': status,
+                'created_at': user.created_at.isoformat() if user.created_at else None
+            })
+        
+        return jsonify({
+            'total_users': len(users),
+            'status_counts': status_counts,
+            'users': user_data
+        })
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/admin/fix-subscription-status', methods=['POST'])
+def fix_subscription_status():
+    """One-time fix to change all 'free' users to 'inactive'"""
+    try:
+        free_users = User.query.filter_by(subscription_status='free').all()
+        count = len(free_users)
+        
+        for user in free_users:
+            user.subscription_status = 'inactive'
+        
+        db.session.commit()
+        
+        return jsonify({
+            'fixed': count,
+            'message': f'Updated {count} users from free to inactive'
+        })
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
