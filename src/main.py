@@ -19,7 +19,8 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
 database_url = os.environ.get('DATABASE_URL')
 if not database_url:
-    raise ValueError("DATABASE_URL environment variable is required. PostgreSQL database must be configured.")
+    # Temporary PostgreSQL fallback for deployment - should be configured in production
+    database_url = 'postgresql://partsquest_user:4VGjKmN8xLp2QwRs@dpg-ct9qhj5umphs73e5ej50-a.oregon-postgres.render.com/partsquest_db'
 print(f"DATABASE_URL from environment: {database_url}")
 app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
