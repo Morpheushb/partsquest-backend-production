@@ -145,6 +145,73 @@ def subscription_required(f):
         return f(current_user, *args, **kwargs)
     return decorated
 
+# NUCLEAR BACKEND PROTECTION - Block revenue leak at API level
+@app.before_request
+def enforce_subscription_at_api_level():
+    """
+    Global protection against subscription bypass.
+    Even if frontend is cached/bypassed, backend will block access.
+    """
+    # Skip check for public endpoints
+    public_endpoints = [
+        '/api/login', '/api/register', '/api/health', 
+        '/api/admin/check-users', '/api/admin/fix-subscription-status',
+        '/', '/favicon.ico'
+    ]
+    
+    # Skip if accessing public endpoint
+    if request.path in public_endpoints:
+        return
+    
+    # Skip if not an API endpoint
+    if not request.path.startswith('/api/'):
+        return
+    
+    # For all protected API endpoints, verify subscription
+    print(f"🚨 BACKEND PROTECTION - Checking access to: {request.path}")
+    
+    # Get current user from token
+    token = None
+    auth_header = request.headers.get('Authorization')
+    if auth_header:
+        try:
+            token = auth_header.split(' ')[1]
+        except IndexError:
+            pass
+    
+    if not token:
+        print(f"🚨 BACKEND PROTECTION - No token for: {request.path}")
+        return jsonify({'error': 'Authentication required'}), 401
+    
+    try:
+        data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
+        user = User.query.get(data['user_id'])
+        
+        if not user:
+            print(f"🚨 BACKEND PROTECTION - Invalid user for: {request.path}")
+            return jsonify({'error': 'Invalid user'}), 401
+        
+        print(f"🚨 BACKEND PROTECTION - User {user.email} accessing {request.path}")
+        print(f"🚨 BACKEND PROTECTION - Subscription status: {user.subscription_status}")
+        
+        # Block access for non-active users to protected endpoints
+        if user.subscription_status != 'active':
+            print(f"🚨 BACKEND PROTECTION - BLOCKING ACCESS! User has '{user.subscription_status}' status")
+            return jsonify({
+                'error': 'Active subscription required',
+                'subscription_status': user.subscription_status,
+                'message': 'Please upgrade your subscription to access this feature'
+            }), 402  # Payment Required
+        
+        print(f"✅ BACKEND PROTECTION - Access granted to active user")
+        
+    except jwt.ExpiredSignatureError:
+        print(f"🚨 BACKEND PROTECTION - Expired token for: {request.path}")
+        return jsonify({'error': 'Token expired'}), 401
+    except jwt.InvalidTokenError:
+        print(f"🚨 BACKEND PROTECTION - Invalid token for: {request.path}")
+        return jsonify({'error': 'Invalid token'}), 401
+
 # Routes
 @app.route('/')
 def home():
