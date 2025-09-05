@@ -833,3 +833,65 @@ if __name__ == '__main__':
         db.create_all()
     app.run(host='0.0.0.0', port=5000, debug=True)
 
+
+@app.route('/api/extract-vin', methods=['POST'])
+@token_required
+@subscription_required
+def extract_vin_from_image(current_user):
+    """Extract VIN from uploaded image using OpenAI Vision API"""
+    try:
+        data = request.get_json()
+        image_data = data.get('image_data')
+        
+        if not image_data:
+            return jsonify({'error': 'No image data provided'}), 400
+        
+        # Import OpenAI here to avoid import errors if not available
+        try:
+            import openai
+        except ImportError:
+            return jsonify({'error': 'OpenAI library not available'}), 500
+        
+        # Set up OpenAI client
+        openai_api_key = os.environ.get('OPENAI_API_KEY')
+        if not openai_api_key:
+            return jsonify({'error': 'OpenAI API key not configured'}), 500
+        
+        client = openai.OpenAI(api_key=openai_api_key)
+        
+        # Call OpenAI Vision API
+        response = client.chat.completions.create(
+            model="gpt-4-vision-preview",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Please extract the VIN (Vehicle Identification Number) from this image. The VIN should be exactly 17 characters long and contain only letters and numbers (no I, O, or Q). Return only the VIN number, nothing else."
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{image_data}"
+                            }
+                        }
+                    ]
+                }
+            ],
+            max_tokens=50
+        )
+        
+        extracted_text = response.choices[0].message.content.strip()
+        
+        # Validate extracted VIN
+        import re
+        vin_pattern = r'^[A-HJ-NPR-Z0-9]{17}$'
+        if re.match(vin_pattern, extracted_text, re.IGNORECASE):
+            return jsonify({'vin': extracted_text.upper()})
+        else:
+            return jsonify({'error': 'Could not extract a valid VIN from the image'}), 400
+        
+    except Exception as e:
+        return jsonify({'error': f'Error processing image: {str(e)}'}), 500
+
