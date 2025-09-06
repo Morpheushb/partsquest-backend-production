@@ -895,3 +895,304 @@ def extract_vin_from_image(current_user):
     except Exception as e:
         return jsonify({'error': f'Error processing image: {str(e)}'}), 500
 
+
+# Voice Calling API Endpoints
+
+# Store active call sessions
+call_sessions = {}
+
+@app.route('/api/voice-calling/start', methods=['POST'])
+@token_required
+def start_voice_calling(current_user):
+    """Start AI voice calling process for parts sourcing"""
+    try:
+        data = request.get_json()
+        
+        # Validate required fields
+        if not data.get('partDescription') or not data.get('vehicleMake'):
+            return jsonify({'error': 'Part description and vehicle make are required'}), 400
+        
+        # Generate unique session ID
+        import uuid
+        session_id = str(uuid.uuid4())
+        
+        # Initialize call session
+        call_sessions[session_id] = {
+            'status': 'starting',
+            'user_id': current_user.id,
+            'part_description': data.get('partDescription'),
+            'part_number': data.get('partNumber', ''),
+            'vehicle_year': data.get('vehicleYear', ''),
+            'vehicle_make': data.get('vehicleMake'),
+            'vehicle_model': data.get('vehicleModel', ''),
+            'call_dealerships': data.get('callDealerships', True),
+            'call_custom_suppliers': data.get('callCustomSuppliers', False),
+            'reserve_for_pickup': data.get('reserveForPickup', False),
+            'search_radius': data.get('searchRadius', 25),
+            'user_location': data.get('userLocation', ''),
+            'total_calls': 0,
+            'completed_calls': 0,
+            'current_supplier': '',
+            'results': [],
+            'created_at': datetime.utcnow()
+        }
+        
+        # Start the calling process asynchronously
+        import threading
+        thread = threading.Thread(target=process_voice_calling, args=(session_id,))
+        thread.daemon = True
+        thread.start()
+        
+        return jsonify({
+            'callSessionId': session_id,
+            'status': 'started',
+            'message': 'Voice calling process initiated'
+        })
+        
+    except Exception as e:
+        return jsonify({'error': f'Error starting voice calling: {str(e)}'}), 500
+
+@app.route('/api/voice-calling/status/<session_id>', methods=['GET'])
+@token_required
+def get_voice_calling_status(current_user, session_id):
+    """Get status of ongoing voice calling session"""
+    try:
+        if session_id not in call_sessions:
+            return jsonify({'error': 'Call session not found'}), 404
+        
+        session = call_sessions[session_id]
+        
+        # Verify user owns this session
+        if session['user_id'] != current_user.id:
+            return jsonify({'error': 'Unauthorized access to call session'}), 403
+        
+        return jsonify({
+            'status': session['status'],
+            'totalCalls': session['total_calls'],
+            'completedCalls': session['completed_calls'],
+            'currentSupplier': session['current_supplier'],
+            'results': session['results']
+        })
+        
+    except Exception as e:
+        return jsonify({'error': f'Error getting call status: {str(e)}'}), 500
+
+@app.route('/api/voice-calling/reserve', methods=['POST'])
+@token_required
+def reserve_part_from_call(current_user):
+    """Reserve a part from voice calling results"""
+    try:
+        data = request.get_json()
+        
+        # Create a part request for the reservation
+        new_request = PartRequest(
+            user_id=current_user.id,
+            part_number=data.get('partNumber', ''),
+            description=f"RESERVED: {data.get('partDescription', '')}",
+            quantity=1,
+            target_price=data.get('price'),
+            urgency='normal',
+            status='reserved',
+            notes=f"Reserved at {data.get('supplierName', 'Unknown Supplier')} - {data.get('reservationNotes', '')}"
+        )
+        
+        db.session.add(new_request)
+        db.session.commit()
+        
+        return jsonify({
+            'message': 'Part reserved successfully',
+            'requestId': new_request.id
+        })
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': f'Error reserving part: {str(e)}'}), 500
+
+def process_voice_calling(session_id):
+    """Process voice calling in background thread"""
+    try:
+        session = call_sessions[session_id]
+        session['status'] = 'processing'
+        
+        # Get dealerships based on vehicle make and user location
+        dealerships = get_nearby_dealerships(
+            session['vehicle_make'],
+            session['user_location'],
+            session['search_radius']
+        )
+        
+        # Get custom suppliers if requested
+        custom_suppliers = []
+        if session['call_custom_suppliers']:
+            custom_suppliers = get_user_custom_suppliers(session['user_id'])
+        
+        # Combine all suppliers
+        all_suppliers = dealerships + custom_suppliers
+        session['total_calls'] = len(all_suppliers)
+        
+        # Process suppliers in batches of 5
+        batch_size = 5
+        for i in range(0, len(all_suppliers), batch_size):
+            batch = all_suppliers[i:i + batch_size]
+            
+            # Process batch concurrently
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+                futures = []
+                for supplier in batch:
+                    session['current_supplier'] = supplier.get('name', 'Unknown')
+                    future = executor.submit(call_supplier, session, supplier)
+                    futures.append(future)
+                
+                # Wait for batch to complete
+                for future in concurrent.futures.as_completed(futures):
+                    try:
+                        result = future.result()
+                        if result:
+                            session['results'].append(result)
+                        session['completed_calls'] += 1
+                    except Exception as e:
+                        print(f"Error calling supplier: {e}")
+                        session['completed_calls'] += 1
+        
+        session['status'] = 'completed'
+        session['current_supplier'] = ''
+        
+    except Exception as e:
+        print(f"Error in voice calling process: {e}")
+        session['status'] = 'error'
+        session['current_supplier'] = ''
+
+def get_nearby_dealerships(vehicle_make, user_location, radius_miles):
+    """Get dealerships from MarketChoice API based on vehicle make and location"""
+    try:
+        # MarketChoice API integration
+        marketchoice_api_key = os.environ.get('MARKETCHOICE_API_KEY')
+        if not marketchoice_api_key:
+            print("MarketChoice API key not configured")
+            return []
+        
+        # This would integrate with MarketChoice API
+        # For now, return mock data
+        mock_dealerships = [
+            {
+                'id': f'{vehicle_make.lower()}_dealer_1',
+                'name': f'{vehicle_make} of Downtown',
+                'phone': '555-0101',
+                'address': '123 Main St',
+                'distance': 5.2,
+                'type': 'dealership'
+            },
+            {
+                'id': f'{vehicle_make.lower()}_dealer_2', 
+                'name': f'{vehicle_make} North',
+                'phone': '555-0102',
+                'address': '456 North Ave',
+                'distance': 8.7,
+                'type': 'dealership'
+            },
+            {
+                'id': f'{vehicle_make.lower()}_dealer_3',
+                'name': f'{vehicle_make} Service Center',
+                'phone': '555-0103', 
+                'address': '789 Service Rd',
+                'distance': 12.1,
+                'type': 'dealership'
+            }
+        ]
+        
+        return mock_dealerships
+        
+    except Exception as e:
+        print(f"Error getting dealerships: {e}")
+        return []
+
+def get_user_custom_suppliers(user_id):
+    """Get user's custom suppliers that accept phone calls"""
+    try:
+        # This would query the user's custom supplier list
+        # For now, return mock data
+        mock_suppliers = [
+            {
+                'id': 'custom_supplier_1',
+                'name': 'Local Parts Plus',
+                'phone': '555-0201',
+                'address': '321 Parts Ave',
+                'distance': 3.5,
+                'type': 'custom_supplier'
+            }
+        ]
+        
+        return mock_suppliers
+        
+    except Exception as e:
+        print(f"Error getting custom suppliers: {e}")
+        return []
+
+def call_supplier(session, supplier):
+    """Make actual phone call to supplier using Vapi"""
+    try:
+        # Simulate call delay
+        import time
+        time.sleep(2)  # Simulate call duration
+        
+        # Mock call result - in real implementation, this would use Vapi
+        import random
+        
+        # Simulate call outcomes
+        outcomes = ['success', 'busy', 'no_answer', 'part_not_available']
+        outcome = random.choice(outcomes)
+        
+        if outcome == 'success':
+            return {
+                'supplierId': supplier['id'],
+                'supplierName': supplier['name'],
+                'supplierPhone': supplier['phone'],
+                'supplierAddress': supplier['address'],
+                'distance': supplier['distance'],
+                'status': 'available',
+                'price': round(random.uniform(50, 500), 2),
+                'leadTime': f"{random.randint(1, 14)} days",
+                'notes': f"Part available, quoted price includes tax",
+                'callDuration': f"{random.randint(30, 180)} seconds",
+                'timestamp': datetime.utcnow().isoformat()
+            }
+        elif outcome == 'part_not_available':
+            return {
+                'supplierId': supplier['id'],
+                'supplierName': supplier['name'],
+                'supplierPhone': supplier['phone'],
+                'supplierAddress': supplier['address'],
+                'distance': supplier['distance'],
+                'status': 'not_available',
+                'price': None,
+                'leadTime': None,
+                'notes': 'Part not in stock, can order with 2-3 week lead time',
+                'callDuration': f"{random.randint(20, 90)} seconds",
+                'timestamp': datetime.utcnow().isoformat()
+            }
+        else:
+            # busy, no_answer
+            return {
+                'supplierId': supplier['id'],
+                'supplierName': supplier['name'],
+                'supplierPhone': supplier['phone'],
+                'supplierAddress': supplier['address'],
+                'distance': supplier['distance'],
+                'status': outcome,
+                'price': None,
+                'leadTime': None,
+                'notes': f"Call {outcome.replace('_', ' ')}, will retry later",
+                'callDuration': "0 seconds",
+                'timestamp': datetime.utcnow().isoformat()
+            }
+        
+    except Exception as e:
+        print(f"Error calling supplier {supplier.get('name', 'Unknown')}: {e}")
+        return None
+
+if __name__ == '__main__':
+    with app.app_context():
+        db.create_all()
+    app.run(host='0.0.0.0', port=5000, debug=True)
+
