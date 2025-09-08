@@ -512,24 +512,61 @@ def get_stripe_config():
 def create_checkout_session(current_user):
     try:
         data = request.get_json()
+        plan = data.get('plan')
         price_id = data.get('price_id')
         
-        if not price_id:
-            return jsonify({'error': 'Price ID is required'}), 400
+        # Plan mapping for different subscription tiers and single search
+        plan_mapping = {
+            'test': {
+                'price_id': 'price_test_plan',  # Replace with actual Stripe price ID
+                'mode': 'subscription'
+            },
+            'starter': {
+                'price_id': 'price_starter_plan',  # Replace with actual Stripe price ID
+                'mode': 'subscription'
+            },
+            'professional': {
+                'price_id': 'price_professional_plan',  # Replace with actual Stripe price ID
+                'mode': 'subscription'
+            },
+            'fleet': {
+                'price_id': 'price_fleet_plan',  # Replace with actual Stripe price ID
+                'mode': 'subscription'
+            },
+            'enterprise': {
+                'price_id': 'price_enterprise_plan',  # Replace with actual Stripe price ID
+                'mode': 'subscription'
+            },
+            'single_search': {
+                'price_id': 'price_single_search',  # Replace with actual Stripe price ID for $39
+                'mode': 'payment'
+            }
+        }
+        
+        # Determine price_id and mode based on plan or direct price_id
+        if plan and plan in plan_mapping:
+            stripe_price_id = plan_mapping[plan]['price_id']
+            payment_mode = plan_mapping[plan]['mode']
+        elif price_id:
+            stripe_price_id = price_id
+            payment_mode = 'subscription'  # Default to subscription for direct price_id
+        else:
+            return jsonify({'error': 'Plan or price_id is required'}), 400
         
         # Create checkout session
         checkout_session = stripe.checkout.Session.create(
             customer=current_user.stripe_customer_id,
             payment_method_types=['card'],
             line_items=[{
-                'price': price_id,
+                'price': stripe_price_id,
                 'quantity': 1,
             }],
-            mode='subscription',
+            mode=payment_mode,
             success_url=request.host_url + 'success?session_id={CHECKOUT_SESSION_ID}',
             cancel_url=request.host_url + 'cancel',
             metadata={
-                'user_id': str(current_user.id)
+                'user_id': str(current_user.id),
+                'plan': plan or 'custom'
             }
         )
         
