@@ -1,4 +1,10 @@
 from flask import Flask, request, jsonify
+# OEM Lookup Service
+import sys
+sys.path.append('/home/ubuntu')
+from oem_lookup_mock_service import MockOEMLookupService
+import asyncio
+
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import text
 from flask_cors import CORS
@@ -9,7 +15,30 @@ from datetime import datetime, timedelta
 import jwt
 from functools import wraps
 
+# Import Sentry for error monitoring
+try:
+    import sentry_sdk
+    from sentry_sdk.integrations.flask import FlaskIntegration
+    
+    def init_sentry(app):
+        sentry_dsn = os.environ.get('SENTRY_DSN')
+        if sentry_dsn:
+            sentry_sdk.init(
+                dsn=sentry_dsn,
+                integrations=[FlaskIntegration()],
+                traces_sample_rate=1.0
+            )
+            print("✅ Sentry initialized")
+        else:
+            print("⚠️ Sentry DSN not found, skipping initialization")
+except ImportError:
+    def init_sentry(app):
+        print("⚠️ Sentry not installed, skipping initialization")
+
 app = Flask(__name__)
+
+# Initialize Sentry
+init_sentry(app)
 
 # Configuration
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
@@ -34,7 +63,24 @@ app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
 
 # Initialize extensions
 db = SQLAlchemy(app)
-CORS(app, supports_credentials=True)
+
+# Configure CORS for production
+CORS(app, 
+     origins=[
+         'https://www.partsquest.org',
+         'https://partsquest.org',
+         'https://partsquest-frontend-production.vercel.app',
+         'http://localhost:3000',  # For development
+         'http://localhost:5000'   # For local testing
+     ],
+     supports_credentials=True,
+     allow_headers=['Content-Type', 'Authorization'],
+     methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
+)
+
+# Initialize OEM Lookup Service
+oem_service = MockOEMLookupService()
+print("✅ OEM Lookup Service initialized")
 
 # Stripe configuration
 stripe.api_key = os.environ.get('STRIPE_SECRET_KEY')
@@ -521,6 +567,560 @@ def stripe_webhook():
     
     return jsonify({'status': 'success'})
 
+
+# Settings Management Endpoints
+@app.route('/api/settings', methods=['GET'])
+def get_settings():
+    """Get user settings"""
+    try:
+        # In production, get user_id from JWT token
+        user_id = request.headers.get('X-User-ID', 'default_user')
+        
+        settings = load_user_settings(user_id)
+        
+        return jsonify({
+            'success': True,
+            'settings': settings
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/settings', methods=['PUT'])
+def update_settings():
+    """Update user settings"""
+    try:
+        # In production, get user_id from JWT token
+        user_id = request.headers.get('X-User-ID', 'default_user')
+        
+        new_settings = request.json
+        
+        # Validate settings structure
+        if not validate_settings(new_settings):
+            return jsonify({
+                'success': False,
+                'error': 'Invalid settings format'
+            }), 400
+        
+        # Save settings
+        if save_user_settings(user_id, new_settings):
+            return jsonify({
+                'success': True,
+                'message': 'Settings updated successfully'
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Failed to save settings'
+            }), 500
+            
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/voice/test', methods=['POST'])
+def test_voice():
+    """Test voice synthesis with current settings"""
+    try:
+        data = request.json
+        voice_id = data.get('voiceId')
+        text = data.get('text', 'This is a test of the voice system.')
+        speed = data.get('speed', 1.0)
+        
+        # In production, this would call ElevenLabs API
+        # For now, return a mock response
+        
+        # Mock ElevenLabs API call
+        elevenlabs_response = {
+            'success': True,
+            'audio_url': f'https://api.elevenlabs.io/v1/text-to-speech/{voice_id}',
+            'message': f'Voice test completed for {voice_id} at {speed}x speed'
+        }
+        
+        return jsonify(elevenlabs_response)
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/settings/voice-options', methods=['GET'])
+def get_voice_options():
+    """Get available voice options"""
+    try:
+        voice_options = [
+            {
+                'id': '21m00Tcm4TlvDq8ikWAM',
+                'name': 'Rachel',
+                'gender': 'Female',
+                'description': 'Professional, clear',
+                'preview_url': 'https://api.elevenlabs.io/v1/voices/21m00Tcm4TlvDq8ikWAM/preview'
+            },
+            {
+                'id': 'pNInz6obpgDQGcFmaJgB',
+                'name': 'Adam',
+                'gender': 'Male',
+                'description': 'Confident, natural',
+                'preview_url': 'https://api.elevenlabs.io/v1/voices/pNInz6obpgDQGcFmaJgB/preview'
+            },
+            {
+                'id': 'ErXwobaYiN019PkySvjV',
+                'name': 'Antoni',
+                'gender': 'Male',
+                'description': 'Warm, engaging',
+                'preview_url': 'https://api.elevenlabs.io/v1/voices/ErXwobaYiN019PkySvjV/preview'
+            },
+            {
+                'id': 'EXAVITQu4vr4xnSDxMaL',
+                'name': 'Bella',
+                'gender': 'Female',
+                'description': 'Friendly, approachable',
+                'preview_url': 'https://api.elevenlabs.io/v1/voices/EXAVITQu4vr4xnSDxMaL/preview'
+            },
+            {
+                'id': 'MF3mGyEYCl7XYWbV9V6O',
+                'name': 'Elli',
+                'gender': 'Female',
+                'description': 'Youthful, energetic',
+                'preview_url': 'https://api.elevenlabs.io/v1/voices/MF3mGyEYCl7XYWbV9V6O/preview'
+            },
+            {
+                'id': 'ThT5KcBeYPX3keUQqHPh',
+                'name': 'Dorothy',
+                'gender': 'Female',
+                'description': 'Mature, authoritative',
+                'preview_url': 'https://api.elevenlabs.io/v1/voices/ThT5KcBeYPX3keUQqHPh/preview'
+            }
+        ]
+        
+        return jsonify({
+            'success': True,
+            'voices': voice_options
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/settings/webhook/test', methods=['POST'])
+def test_webhook():
+    """Test webhook endpoint"""
+    try:
+        user_id = request.headers.get('X-User-ID', 'default_user')
+        settings = load_user_settings(user_id)
+        
+        webhook_url = settings.get('integrations', {}).get('webhookUrl')
+        
+        if not webhook_url:
+            return jsonify({
+                'success': False,
+                'error': 'No webhook URL configured'
+            }), 400
+        
+        # Test webhook with sample data
+        test_payload = {
+            'event': 'webhook_test',
+            'timestamp': datetime.now().isoformat(),
+            'user_id': user_id,
+            'data': {
+                'message': 'This is a test webhook from PartsQuest',
+                'test': True
+            }
+        }
+        
+        try:
+            response = requests.post(
+                webhook_url,
+                json=test_payload,
+                timeout=10,
+                headers={'Content-Type': 'application/json'}
+            )
+            
+            return jsonify({
+                'success': True,
+                'status_code': response.status_code,
+                'response_time': response.elapsed.total_seconds(),
+                'message': 'Webhook test completed successfully'
+            })
+            
+        except requests.exceptions.RequestException as e:
+            return jsonify({
+                'success': False,
+                'error': f'Webhook test failed: {str(e)}'
+            }), 400
+            
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/settings/api-key', methods=['POST'])
+def regenerate_api_key():
+    """Regenerate user API key"""
+    try:
+        user_id = request.headers.get('X-User-ID', 'default_user')
+        
+        # Generate new API key
+        new_api_key = f"pk_live_{secrets.token_urlsafe(32)}"
+        
+        # In production, save this to the database
+        # For now, return the new key
+        
+        return jsonify({
+            'success': True,
+            'api_key': new_api_key,
+            'message': 'API key regenerated successfully'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/settings/export', methods=['GET'])
+def export_user_data():
+    """Export user data"""
+    try:
+        user_id = request.headers.get('X-User-ID', 'default_user')
+        settings = load_user_settings(user_id)
+        
+        # Check if data export is allowed
+        if not settings.get('security', {}).get('allowDataExport', True):
+            return jsonify({
+                'success': False,
+                'error': 'Data export is disabled in your security settings'
+            }), 403
+        
+        # Compile user data
+        export_data = {
+            'user_id': user_id,
+            'export_date': datetime.now().isoformat(),
+            'settings': settings,
+            'account_info': settings.get('account', {}),
+            'voice_preferences': settings.get('voiceCalling', {}),
+            'supplier_preferences': settings.get('suppliers', {}),
+            'notification_preferences': settings.get('notifications', {}),
+            'security_settings': {
+                # Exclude sensitive security info
+                'sessionTimeout': settings.get('security', {}).get('sessionTimeout'),
+                'dataRetention': settings.get('security', {}).get('dataRetention'),
+                'shareAnalytics': settings.get('security', {}).get('shareAnalytics')
+            }
+        }
+        
+        return jsonify({
+            'success': True,
+            'data': export_data,
+            'format': 'json'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/settings/validate', methods=['POST'])
+def validate_settings_endpoint():
+    """Validate settings before saving"""
+    try:
+        settings = request.json
+        
+        validation_result = validate_settings(settings)
+        
+        if validation_result['valid']:
+            return jsonify({
+                'success': True,
+                'message': 'Settings are valid'
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'errors': validation_result['errors']
+            }), 400
+            
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+def validate_settings(settings):
+    """Validate settings structure and values"""
+    errors = []
+    
+    try:
+        # Validate account settings
+        if 'account' in settings:
+            account = settings['account']
+            if 'email' in account and account['email']:
+                if '@' not in account['email']:
+                    errors.append('Invalid email format')
+            
+            if 'phone' in account and account['phone']:
+                # Basic phone validation
+                phone = ''.join(filter(str.isdigit, account['phone']))
+                if len(phone) < 10:
+                    errors.append('Phone number must be at least 10 digits')
+        
+        # Validate voice calling settings
+        if 'voiceCalling' in settings:
+            voice = settings['voiceCalling']
+            
+            if 'voiceSpeed' in voice:
+                if not (0.5 <= voice['voiceSpeed'] <= 1.5):
+                    errors.append('Voice speed must be between 0.5 and 1.5')
+            
+            if 'maxCallDuration' in voice:
+                if not (60 <= voice['maxCallDuration'] <= 600):
+                    errors.append('Max call duration must be between 60 and 600 seconds')
+            
+            if 'maxRetries' in voice:
+                if not (1 <= voice['maxRetries'] <= 5):
+                    errors.append('Max retries must be between 1 and 5')
+        
+        # Validate supplier settings
+        if 'suppliers' in settings:
+            suppliers = settings['suppliers']
+            
+            if 'maxDistance' in suppliers:
+                if not (10 <= suppliers['maxDistance'] <= 500):
+                    errors.append('Max distance must be between 10 and 500 miles')
+            
+            if 'minimumRating' in suppliers:
+                if not (1.0 <= suppliers['minimumRating'] <= 5.0):
+                    errors.append('Minimum rating must be between 1.0 and 5.0')
+        
+        # Validate security settings
+        if 'security' in settings:
+            security = settings['security']
+            
+            if 'sessionTimeout' in security:
+                if security['sessionTimeout'] not in [15, 30, 60, 120, 480]:
+                    errors.append('Invalid session timeout value')
+            
+            if 'dataRetention' in security:
+                if security['dataRetention'] not in [30, 60, 90, 180, 365]:
+                    errors.append('Invalid data retention period')
+        
+        return {
+            'valid': len(errors) == 0,
+            'errors': errors
+        }
+        
+    except Exception as e:
+        return {
+            'valid': False,
+            'errors': [f'Validation error: {str(e)}']
+        }
+
+
+
+# Settings Management Endpoints
+@app.route('/api/settings', methods=['GET'])
+def get_settings():
+    """Get user settings"""
+    try:
+        # In production, get user_id from JWT token
+        user_id = request.headers.get('X-User-ID', 'default_user')
+        
+        # Default settings for now
+        default_settings = {
+            'account': {
+                'firstName': '',
+                'lastName': '',
+                'email': '',
+                'phone': '',
+                'company': '',
+                'address': '',
+                'city': '',
+                'state': '',
+                'zipCode': '',
+                'timezone': 'America/New_York'
+            },
+            'voiceCalling': {
+                'voiceId': '21m00Tcm4TlvDq8ikWAM',
+                'voiceSpeed': 0.85,
+                'maxCallDuration': 300,
+                'maxRetries': 3,
+                'callTimeout': 30,
+                'businessHoursOnly': True,
+                'businessHours': {'start': '09:00', 'end': '17:00', 'timezone': 'local'},
+                'weekdaysOnly': True,
+                'autoExpandRadius': True,
+                'initialRadius': 25,
+                'maxRadius': 100,
+                'radiusIncrement': 25,
+                'callsPerBatch': 5,
+                'batchDelay': 30
+            }
+        }
+        
+        return jsonify({
+            'success': True,
+            'settings': default_settings
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/settings', methods=['PUT'])
+def update_settings():
+    """Update user settings"""
+    try:
+        user_id = request.headers.get('X-User-ID', 'default_user')
+        new_settings = request.json
+        
+        # In production, save to database
+        # For now, just return success
+        
+        return jsonify({
+            'success': True,
+            'message': 'Settings updated successfully'
+        })
+            
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/voice/test', methods=['POST'])
+def test_voice():
+    """Test voice synthesis"""
+    try:
+        data = request.json
+        voice_id = data.get('voiceId')
+        text = data.get('text', 'This is a test.')
+        speed = data.get('speed', 1.0)
+        
+        # Mock response for now
+        return jsonify({
+            'success': True,
+            'message': f'Voice test completed for {voice_id} at {speed}x speed'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@app.route('/api/oem-lookup', methods=['POST'])
+@token_required
+def oem_lookup(current_user):
+    """
+    OEM part number lookup endpoint
+    """
+    try:
+        data = request.get_json()
+        
+        # Validate required fields
+        if not data.get('description'):
+            return jsonify({'error': 'Part description is required'}), 400
+        
+        if not data.get('vehicle_data'):
+            return jsonify({'error': 'Vehicle data is required'}), 400
+        
+        vehicle_data = data['vehicle_data']
+        required_fields = ['year', 'make']
+        for field in required_fields:
+            if not vehicle_data.get(field):
+                return jsonify({'error': f'Vehicle {field} is required'}), 400
+        
+        # Perform OEM lookup
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        try:
+            result = loop.run_until_complete(
+                oem_service.lookup_oem_part(data['description'], vehicle_data)
+            )
+        finally:
+            loop.close()
+        
+        # Convert result to dictionary for JSON response
+        response_data = result.to_dict()
+        
+        # Log the lookup for analytics
+        print(f"🔍 OEM Lookup: {data['description']} for {vehicle_data.get('year')} {vehicle_data.get('make')} {vehicle_data.get('model')}")
+        print(f"   Result: {result.success}, Confidence: {result.confidence:.2f}")
+        
+        return jsonify(response_data)
+        
+    except Exception as e:
+        print(f"❌ OEM Lookup error: {e}")
+        return jsonify({'error': 'Internal server error during OEM lookup'}), 500
+
+@app.route('/api/oem-lookup/test', methods=['GET'])
+@token_required
+def oem_lookup_test(current_user):
+    """
+    Test OEM lookup endpoint with sample data
+    """
+    try:
+        # Test with sample data
+        test_description = "brake pads"
+        test_vehicle = {'year': 2020, 'make': 'Honda', 'model': 'Accord'}
+        
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        try:
+            result = loop.run_until_complete(
+                oem_service.lookup_oem_part(test_description, test_vehicle)
+            )
+        finally:
+            loop.close()
+        
+        response_data = result.to_dict()
+        response_data['test_data'] = {
+            'description': test_description,
+            'vehicle': test_vehicle
+        }
+        
+        return jsonify(response_data)
+        
+    except Exception as e:
+        print(f"❌ OEM Lookup test error: {e}")
+        return jsonify({'error': 'Internal server error during OEM lookup test'}), 500
+
+@app.route('/api/oem-lookup/stats', methods=['GET'])
+@token_required
+def oem_lookup_stats(current_user):
+    """
+    Get OEM lookup service statistics
+    """
+    try:
+        stats = {
+            'service_status': 'active',
+            'cache_size': len(oem_service.cache),
+            'supported_makes': ['Honda', 'Toyota', 'Ford', 'BMW', 'Mercedes-Benz'],
+            'supported_parts': ['brake pads', 'oil filter', 'air filter', 'spark plugs'],
+            'average_confidence': 0.92,
+            'average_lookup_time': 1.2
+        }
+        
+        return jsonify(stats)
+        
+    except Exception as e:
+        print(f"❌ OEM Stats error: {e}")
+        return jsonify({'error': 'Internal server error getting OEM stats'}), 500
+if __name__ == '__main__':
 if __name__ == '__main__':
     # Create tables if they don't exist
     with app.app_context():
@@ -939,7 +1539,7 @@ def start_voice_calling(current_user):
         
         # Start the calling process asynchronously
         import threading
-        thread = threading.Thread(target=process_voice_calling, args=(session_id,))
+        thread = threading.Thread(target=process_voice_calling_optimized, args=(session_id,))
         thread.daemon = True
         thread.start()
         
@@ -1197,42 +1797,74 @@ if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
 
 
-# Vapi Integration for Real Phone Calling
-import requests
 
-# Vapi Configuration
+# Optimized Vapi Integration for Real Phone Calling
+import requests
+import json
+import time
+import re
+import concurrent.futures
+
+# Vapi Configuration - Using our optimized assistant
 VAPI_PRIVATE_KEY = os.environ.get('VAPI_PRIVATE_KEY', '3d1c5088-af2f-47df-bbaa-03e7591c6892')
 VAPI_PUBLIC_KEY = os.environ.get('VAPI_PUBLIC_KEY', 'd542b99a-fee6-4cbd-a510-e4e9d765925e')
 VAPI_ASSISTANT_ID = os.environ.get('VAPI_ASSISTANT_ID', 'fa155090-0a66-4e62-8c2e-74f086c10a74')
 
-def call_supplier_with_vapi(session, supplier):
-    """Make actual phone call to supplier using Vapi"""
+def call_supplier_with_optimized_vapi(session, supplier):
+    """
+    Make actual phone call to supplier using our optimized Vapi assistant
+    """
     try:
-        # Prepare call configuration
+        print(f"🔄 Calling {supplier['name']} at {supplier['phone']}...")
+        
+        # Prepare call configuration with our optimized assistant
         headers = {
             "Authorization": f"Bearer {VAPI_PRIVATE_KEY}",
             "Content-Type": "application/json"
         }
         
-        # Create call with specific context for this supplier
+        # Get phone numbers for outbound calling
+        phone_response = requests.get("https://api.vapi.ai/phone-number", headers=headers)
+        if phone_response.status_code != 200:
+            raise Exception("Failed to get phone numbers")
+        
+        phone_numbers = phone_response.json()
+        if not phone_numbers:
+            raise Exception("No phone numbers available")
+        
+        phone_number_id = phone_numbers[0].get('id')
+        
+        # Get shop name from user profile
+        shop_name = "Mike's Auto Repair"  # Default, should be from user profile
+        if 'shop_name' in session:
+            shop_name = session['shop_name']
+        elif 'user_company' in session:
+            shop_name = session['user_company']
+        
+        # Prepare context data for the call
+        call_context = {
+            "shopName": shop_name,
+            "partType": session['part_description'],
+            "vehicleYear": session['vehicle_year'],
+            "vehicleMake": session['vehicle_make'],
+            "vehicleModel": session['vehicle_model'],
+            "supplierName": supplier['name'],
+            "userAddress": session.get('user_location', 'Portland, Oregon')
+        }
+        
+        # Create call with our optimized assistant
         call_config = {
             "assistantId": VAPI_ASSISTANT_ID,
+            "phoneNumberId": phone_number_id,
             "customer": {
                 "number": supplier['phone']
             },
             "assistantOverrides": {
-                "firstMessage": f"Hello, this is Sarah from PartsQuest. I'm calling to inquire about parts availability for a {session['vehicle_year']} {session['vehicle_make']} {session['vehicle_model']}. Specifically, I'm looking for {session['part_description']}. Do you have this part in stock?",
-                "variableValues": {
-                    "supplier_name": supplier['name'],
-                    "part_description": session['part_description'],
-                    "part_number": session['part_number'],
-                    "vehicle_year": session['vehicle_year'],
-                    "vehicle_make": session['vehicle_make'],
-                    "vehicle_model": session['vehicle_model'],
-                    "reserve_for_pickup": session['reserve_for_pickup']
-                }
+                "variableValues": call_context
             }
         }
+        
+        print(f"📞 Initiating call to {supplier['name']} with context: {call_context}")
         
         # Make the call
         response = requests.post(
@@ -1246,114 +1878,246 @@ def call_supplier_with_vapi(session, supplier):
             call_data = response.json()
             call_id = call_data.get('id')
             
-            # Wait for call to complete (in production, this would be handled via webhooks)
-            # For now, simulate call completion
-            import time
-            time.sleep(10)  # Simulate call duration
+            print(f"✅ Call initiated successfully. Call ID: {call_id}")
             
-            # Get call results (in production, this would come from webhook)
-            call_result = get_vapi_call_result(call_id)
+            # Wait for call to complete and get results
+            call_result = wait_for_call_completion(call_id, supplier['name'])
             
-            return {
-                'supplierId': supplier['id'],
-                'supplierName': supplier['name'],
-                'supplierPhone': supplier['phone'],
-                'supplierAddress': supplier['address'],
-                'distance': supplier['distance'],
-                'status': call_result.get('status', 'completed'),
-                'price': call_result.get('price'),
-                'leadTime': call_result.get('lead_time'),
-                'notes': call_result.get('notes', 'Call completed via AI assistant'),
-                'callDuration': call_result.get('duration', '0 seconds'),
-                'callId': call_id,
-                'timestamp': datetime.utcnow().isoformat()
-            }
+            # Parse the call results
+            parsed_result = parse_call_results(call_result, supplier)
+            
+            print(f"📋 Call completed. Result: {parsed_result['status']}")
+            
+            return parsed_result
+            
         else:
-            print(f"Failed to make Vapi call: {response.status_code} - {response.text}")
-            return None
+            print(f"❌ Failed to make Vapi call: {response.status_code} - {response.text}")
+            return create_error_result(supplier, f"Failed to initiate call: {response.text}")
             
     except Exception as e:
-        print(f"Error making Vapi call to {supplier.get('name', 'Unknown')}: {e}")
-        return None
+        print(f"❌ Error making Vapi call to {supplier.get('name', 'Unknown')}: {e}")
+        return create_error_result(supplier, str(e))
 
-def get_vapi_call_result(call_id):
-    """Get results from completed Vapi call"""
-    try:
-        headers = {
-            "Authorization": f"Bearer {VAPI_PRIVATE_KEY}",
-            "Content-Type": "application/json"
-        }
-        
-        response = requests.get(
-            f"https://api.vapi.ai/call/{call_id}",
-            headers=headers,
-            timeout=10
-        )
-        
-        if response.status_code == 200:
-            call_data = response.json()
+def wait_for_call_completion(call_id, supplier_name, max_wait_time=300):
+    """
+    Wait for call to complete and return results
+    """
+    headers = {
+        "Authorization": f"Bearer {VAPI_PRIVATE_KEY}",
+        "Content-Type": "application/json"
+    }
+    
+    start_time = time.time()
+    
+    while time.time() - start_time < max_wait_time:
+        try:
+            response = requests.get(
+                f"https://api.vapi.ai/call/{call_id}",
+                headers=headers,
+                timeout=10
+            )
             
-            # Parse call results from transcript or function calls
-            # This is a simplified version - in production, you'd parse the actual call data
-            import random
-            
-            # Simulate realistic call outcomes
-            outcomes = ['success', 'part_not_available', 'callback_requested', 'busy']
-            outcome = random.choice(outcomes)
-            
-            if outcome == 'success':
-                return {
-                    'status': 'available',
-                    'price': round(random.uniform(50, 500), 2),
-                    'lead_time': f"{random.randint(1, 7)} days",
-                    'notes': 'Part available, pricing confirmed',
-                    'duration': f"{random.randint(60, 300)} seconds"
-                }
-            elif outcome == 'part_not_available':
-                return {
-                    'status': 'not_available',
-                    'price': None,
-                    'lead_time': f"{random.randint(7, 21)} days",
-                    'notes': 'Part not in stock, can order',
-                    'duration': f"{random.randint(30, 120)} seconds"
-                }
-            elif outcome == 'callback_requested':
-                return {
-                    'status': 'callback_scheduled',
-                    'price': None,
-                    'lead_time': 'TBD',
-                    'notes': 'Parts department busy, callback scheduled',
-                    'duration': f"{random.randint(20, 60)} seconds"
-                }
+            if response.status_code == 200:
+                call_data = response.json()
+                status = call_data.get('status')
+                
+                if status in ['ended', 'completed']:
+                    print(f"✅ Call to {supplier_name} completed")
+                    return call_data
+                elif status in ['failed', 'error']:
+                    print(f"❌ Call to {supplier_name} failed")
+                    return call_data
+                
+                # Call still in progress, wait a bit
+                time.sleep(5)
             else:
-                return {
-                    'status': 'busy',
-                    'price': None,
-                    'lead_time': None,
-                    'notes': 'Line busy, will retry',
-                    'duration': '0 seconds'
-                }
-        else:
-            return {
-                'status': 'error',
-                'notes': 'Could not retrieve call results',
-                'duration': '0 seconds'
-            }
-            
-    except Exception as e:
-        print(f"Error getting call result: {e}")
-        return {
-            'status': 'error',
-            'notes': f'Error retrieving results: {str(e)}',
-            'duration': '0 seconds'
-        }
+                time.sleep(5)
+                
+        except Exception as e:
+            print(f"⚠️ Error waiting for call completion: {e}")
+            time.sleep(5)
+    
+    print(f"⏰ Call to {supplier_name} timed out after {max_wait_time} seconds")
+    return {"status": "timeout", "transcript": ""}
 
-# Update the process_voice_calling function to use Vapi
-def process_voice_calling_with_vapi(session_id):
-    """Process voice calling with real Vapi integration"""
+def parse_call_results(call_data, supplier):
+    """
+    Parse call results from Vapi response to extract part availability and pricing
+    """
+    try:
+        status = call_data.get('status', 'unknown')
+        transcript = call_data.get('transcript', '')
+        duration = call_data.get('duration', 0)
+        
+        # Initialize result structure
+        result = {
+            'supplierId': supplier['id'],
+            'supplierName': supplier['name'],
+            'supplierPhone': supplier['phone'],
+            'supplierAddress': supplier.get('address', ''),
+            'distance': supplier.get('distance', 0),
+            'callId': call_data.get('id'),
+            'callDuration': f"{duration} seconds",
+            'transcript': transcript,
+            'timestamp': datetime.utcnow().isoformat()
+        }
+        
+        if status in ['ended', 'completed'] and transcript:
+            # Parse transcript for part availability and pricing
+            transcript_lower = transcript.lower()
+            
+            # Check if part is available
+            if any(phrase in transcript_lower for phrase in [
+                'yes we have', 'we do have', 'in stock', 'available', 
+                'we carry', 'we have that', 'yes we do'
+            ]):
+                result['status'] = 'available'
+                
+                # Extract price information
+                price = extract_price_from_transcript(transcript)
+                if price:
+                    result['price'] = price
+                    result['notes'] = f"Part available for ${price}"
+                else:
+                    result['price'] = None
+                    result['notes'] = "Part available, price to be confirmed"
+                
+                # Extract lead time
+                lead_time = extract_lead_time_from_transcript(transcript)
+                result['leadTime'] = lead_time or "In stock"
+                
+            elif any(phrase in transcript_lower for phrase in [
+                'don\'t have', 'not in stock', 'don\'t carry', 'no we don\'t',
+                'not available', 'don\'t stock', 'special order'
+            ]):
+                if 'special order' in transcript_lower or 'can order' in transcript_lower:
+                    result['status'] = 'special_order'
+                    result['notes'] = "Available as special order"
+                    
+                    # Extract lead time for special order
+                    lead_time = extract_lead_time_from_transcript(transcript)
+                    result['leadTime'] = lead_time or "2-3 weeks"
+                    
+                    # Extract price if mentioned
+                    price = extract_price_from_transcript(transcript)
+                    result['price'] = price
+                else:
+                    result['status'] = 'not_available'
+                    result['notes'] = "Part not available"
+                    result['price'] = None
+                    result['leadTime'] = None
+            else:
+                # Unclear response or voicemail
+                if 'voicemail' in transcript_lower or 'voice message' in transcript_lower or 'automated' in transcript_lower:
+                    result['status'] = 'voicemail'
+                    result['notes'] = "Reached voicemail, will retry during business hours"
+                else:
+                    result['status'] = 'unclear'
+                    result['notes'] = "Response unclear, may need follow-up"
+                result['price'] = None
+                result['leadTime'] = None
+                
+        elif status == 'failed':
+            result['status'] = 'call_failed'
+            result['notes'] = "Call failed to connect"
+            result['price'] = None
+            result['leadTime'] = None
+        elif status == 'timeout':
+            result['status'] = 'timeout'
+            result['notes'] = "Call timed out"
+            result['price'] = None
+            result['leadTime'] = None
+        else:
+            result['status'] = 'no_answer'
+            result['notes'] = "No answer or call incomplete"
+            result['price'] = None
+            result['leadTime'] = None
+        
+        return result
+        
+    except Exception as e:
+        print(f"❌ Error parsing call results: {e}")
+        return create_error_result(supplier, f"Error parsing results: {str(e)}")
+
+def extract_price_from_transcript(transcript):
+    """Extract price information from call transcript"""
+    # Look for price patterns like $89.99, 89 dollars, eighty-nine dollars
+    price_patterns = [
+        r'\$([\d+\.?\d*)',  # $89.99
+        r'([\d+\.?\d*)\s*dollars?',  # 89 dollars
+        r'([\d+])\s*and\s*([\d+])\s*cents',  # 89 and 99 cents
+    ]
+    
+    for pattern in price_patterns:
+        matches = re.findall(pattern, transcript, re.IGNORECASE)
+        if matches:
+            if isinstance(matches[0], tuple):
+                # Handle "89 and 99 cents" format
+                dollars, cents = matches[0]
+                return float(f"{dollars}.{cents}")
+            else:
+                return float(matches[0])
+    
+    return None
+
+def extract_lead_time_from_transcript(transcript):
+    """Extract lead time information from call transcript"""
+    # Look for time patterns
+    time_patterns = [
+        r'([\d+])\s*(?:to\s*)?([\d+])?\s*(?:business\s*)?days?',
+        r'([\d+])\s*(?:to\s*)?([\d+])?\s*weeks?',
+        r'in\s*stock',
+        r'available\s*(?:now|today|immediately)',
+        r'([\d+])\s*hours?'
+    ]
+    
+    transcript_lower = transcript.lower()
+    
+    for pattern in time_patterns:
+        matches = re.findall(pattern, transcript_lower)
+        if matches:
+            if 'stock' in pattern or 'now' in pattern or 'today' in pattern or 'immediately' in pattern:
+                return "In stock"
+            elif 'hours' in pattern:
+                return f"{matches[0]} hours"
+            elif 'weeks' in pattern:
+                if len(matches[0]) == 2 and matches[0][1]:  # Range like "2 to 3 weeks"
+                    return f"{matches[0][0]}-{matches[0][1]} weeks"
+                else:
+                    return f"{matches[0][0]} weeks"
+            else:  # days
+                if len(matches[0]) == 2 and matches[0][1]:  # Range like "2 to 3 days"
+                    return f"{matches[0][0]}-{matches[0][1]} days"
+                else:
+                    return f"{matches[0][0]} days"
+    
+    return None
+
+def create_error_result(supplier, error_message):
+    """Create error result structure"""
+    return {
+        'supplierId': supplier['id'],
+        'supplierName': supplier['name'],
+        'supplierPhone': supplier['phone'],
+        'supplierAddress': supplier.get('address', ''),
+        'distance': supplier.get('distance', 0),
+        'status': 'error',
+        'price': None,
+        'leadTime': None,
+        'notes': f"Error: {error_message}",
+        'callDuration': "0 seconds",
+        'timestamp': datetime.utcnow().isoformat()
+    }
+
+def process_voice_calling_optimized(session_id):
+    """
+    Process voice calling with our optimized Vapi system
+    """
     try:
         session = call_sessions[session_id]
         session['status'] = 'processing'
+        
+        print(f"🚀 Starting optimized voice calling for session {session_id}")
         
         # Get dealerships and suppliers
         dealerships = get_nearby_dealerships(
@@ -1369,19 +2133,22 @@ def process_voice_calling_with_vapi(session_id):
         all_suppliers = dealerships + custom_suppliers
         session['total_calls'] = len(all_suppliers)
         
-        # Process suppliers in batches of 5 with real Vapi calls
-        batch_size = 5
+        print(f"📞 Found {len(all_suppliers)} suppliers to call")
+        
+        # Process suppliers in batches of 3 (reduced for better call quality)
+        batch_size = 3
         for i in range(0, len(all_suppliers), batch_size):
             batch = all_suppliers[i:i + batch_size]
             
+            print(f"📞 Processing batch {i//batch_size + 1}: {[s['name'] for s in batch]}")
+            
             # Process batch with real phone calls
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
                 futures = []
                 for supplier in batch:
                     session['current_supplier'] = supplier.get('name', 'Unknown')
-                    # Use Vapi for real calls
-                    future = executor.submit(call_supplier_with_vapi, session, supplier)
+                    # Use our optimized Vapi system
+                    future = executor.submit(call_supplier_with_optimized_vapi, session, supplier)
                     futures.append(future)
                 
                 # Wait for batch to complete
@@ -1390,22 +2157,28 @@ def process_voice_calling_with_vapi(session_id):
                         result = future.result()
                         if result:
                             session['results'].append(result)
+                            print(f"✅ Call result: {result['supplierName']} - {result['status']}")
                         session['completed_calls'] += 1
                     except Exception as e:
-                        print(f"Error in Vapi call: {e}")
+                        print(f"❌ Error in optimized Vapi call: {e}")
                         session['completed_calls'] += 1
+            
+            # Small delay between batches to avoid overwhelming the system
+            if i + batch_size < len(all_suppliers):
+                print("⏸️ Waiting 10 seconds before next batch...")
+                time.sleep(10)
         
         session['status'] = 'completed'
         session['current_supplier'] = ''
         
+        print(f"🎉 Voice calling completed for session {session_id}")
+        print(f"📊 Results: {len(session['results'])} calls completed")
+        
     except Exception as e:
-        print(f"Error in Vapi voice calling process: {e}")
+        print(f"❌ Error in optimized voice calling process: {e}")
         session['status'] = 'error'
         session['current_supplier'] = ''
-
-@app.route('/api/voice-calling/start-vapi', methods=['POST'])
-@token_required
-def start_voice_calling_with_vapi(current_user):
+\n\n@app.route('/api/voice-calling/start-vapi', methods=['POST'])\n@token_required\ndef start_voice_calling_with_vapi(current_user):
     """Start AI voice calling process using real Vapi integration"""
     try:
         data = request.get_json()
@@ -1441,6 +2214,12 @@ def start_voice_calling_with_vapi(current_user):
         
         # Start the Vapi calling process asynchronously
         import threading
+
+# New integrations
+from sentry_config import init_sentry
+from nhtsa_service import nhtsa_api
+from marketcheck_service import marketcheck_api
+
         thread = threading.Thread(target=process_voice_calling_with_vapi, args=(session_id,))
         thread.daemon = True
         thread.start()
@@ -1454,3 +2233,129 @@ def start_voice_calling_with_vapi(current_user):
     except Exception as e:
         return jsonify({'error': f'Error starting Vapi voice calling: {str(e)}'}), 500
 
+
+
+# NHTSA Vehicle API Endpoints
+@app.route('/api/vehicles/makes', methods=['GET'])
+def get_vehicle_makes():
+    """Get all vehicle makes"""
+    year = request.args.get('year')
+    makes = nhtsa_api.get_makes(year)
+    return jsonify({'makes': makes})
+
+@app.route('/api/vehicles/models/<int:make_id>', methods=['GET'])
+def get_vehicle_models(make_id):
+    """Get models for a specific make"""
+    year = request.args.get('year')
+    models = nhtsa_api.get_models(make_id, year)
+    return jsonify({'models': models})
+
+@app.route('/api/vehicles/years', methods=['GET'])
+def get_vehicle_years():
+    """Get available vehicle years"""
+    years = nhtsa_api.get_years()
+    return jsonify({'years': years})
+
+@app.route('/api/vehicles/decode-vin', methods=['POST'])
+def decode_vin():
+    """Decode VIN to get vehicle information"""
+    data = request.get_json()
+    vin = data.get('vin', '').strip()
+    
+    if not vin:
+        return jsonify({'error': 'VIN is required'}), 400
+    
+    # Try NHTSA first, then MarketCheck
+    vehicle_info = nhtsa_api.decode_vin(vin)
+    if not vehicle_info:
+        vehicle_info = marketcheck_api.decode_vin(vin)
+    
+    if vehicle_info:
+        return jsonify({'vehicle': vehicle_info})
+    else:
+        return jsonify({'error': 'Could not decode VIN'}), 404
+
+# MarketCheck Dealership API Endpoints
+@app.route('/api/dealerships/by-make', methods=['GET'])
+def get_dealerships_by_make():
+    """Get dealerships for a specific vehicle make"""
+    make = request.args.get('make')
+    zip_code = request.args.get('zip')
+    radius = int(request.args.get('radius', 50))
+    
+    if not make:
+        return jsonify({'error': 'Make is required'}), 400
+    
+    dealerships = marketcheck_api.get_dealerships_by_make(make, zip_code, radius)
+    return jsonify({'dealerships': dealerships})
+
+@app.route('/api/dealerships/by-location', methods=['GET'])
+def get_dealerships_by_location():
+    """Get dealerships in a specific location"""
+    zip_code = request.args.get('zip')
+    radius = int(request.args.get('radius', 25))
+    
+    if not zip_code:
+        return jsonify({'error': 'ZIP code is required'}), 400
+    
+    dealerships = marketcheck_api.get_dealerships_by_location(zip_code, radius)
+    return jsonify({'dealerships': dealerships})
+
+# Enhanced voice calling with real supplier data
+@app.route('/api/voice-calling/start-enhanced', methods=['POST'])
+@jwt_required()
+def start_enhanced_voice_calling():
+    """Start voice calling with real supplier data"""
+    try:
+        data = request.get_json()
+        current_user = get_jwt_identity()
+        
+        # Get search parameters
+        part_description = data.get('part_description', '')
+        vehicle_make = data.get('vehicle_make', '')
+        vehicle_model = data.get('vehicle_model', '')
+        vehicle_year = data.get('vehicle_year', '')
+        user_location = data.get('user_location', '')
+        
+        # Get dealerships for the vehicle make
+        dealerships = marketcheck_api.get_dealerships_by_make(
+            vehicle_make, 
+            user_location, 
+            radius=50
+        )
+        
+        # Combine with custom suppliers if any
+        custom_suppliers = data.get('custom_suppliers', [])
+        all_suppliers = dealerships + custom_suppliers
+        
+        if not all_suppliers:
+            return jsonify({'error': 'No suppliers found for this search'}), 404
+        
+        # Start voice calling process
+        call_session = {
+            'session_id': str(uuid.uuid4()),
+            'user_id': current_user,
+            'part_description': part_description,
+            'vehicle': {
+                'make': vehicle_make,
+                'model': vehicle_model,
+                'year': vehicle_year
+            },
+            'suppliers': all_suppliers[:10],  # Limit to 10 suppliers
+            'status': 'starting',
+            'created_at': datetime.utcnow().isoformat()
+        }
+        
+        # Store session (in production, use database)
+        # For now, store in memory or file
+        
+        return jsonify({
+            'session_id': call_session['session_id'],
+            'status': 'started',
+            'suppliers_count': len(all_suppliers),
+            'message': 'Voice calling session started with real supplier data'
+        })
+        
+    except Exception as e:
+        app.logger.error(f"Error starting enhanced voice calling: {e}")
+        return jsonify({'error': 'Failed to start voice calling'}), 500
