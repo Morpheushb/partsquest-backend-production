@@ -267,6 +267,7 @@ def enforce_subscription_at_api_level():
     public_endpoints = [
         '/api/login', '/api/register', '/api/health', 
         '/api/admin/check-users', '/api/admin/fix-subscription-status',
+        '/api/admin/health',  # Admin health check (no auth required)
         '/', '/favicon.ico'
     ]
     
@@ -2359,3 +2360,333 @@ def start_enhanced_voice_calling():
     except Exception as e:
         app.logger.error(f"Error starting enhanced voice calling: {e}")
         return jsonify({'error': 'Failed to start voice calling'}), 500
+
+
+# =============================================================================
+# ADMIN API ENDPOINTS
+# =============================================================================
+
+def admin_required(f):
+    """Decorator to require admin access"""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        # Simple admin check - in production, this should be more sophisticated
+        auth_header = request.headers.get('Authorization')
+        if not auth_header:
+            return jsonify({'error': 'Admin authentication required'}), 401
+        
+        # For now, accept any valid token as admin
+        # In production, you'd check for admin role
+        token = auth_header.replace('Bearer ', '')
+        user_id = verify_token(token)
+        if not user_id:
+            return jsonify({'error': 'Invalid admin token'}), 401
+        
+        current_user = User.query.get(user_id)
+        if not current_user:
+            return jsonify({'error': 'Admin user not found'}), 401
+        
+        return f(current_user, *args, **kwargs)
+    return decorated
+
+@app.route('/api/admin/users', methods=['GET'])
+@admin_required
+def admin_get_users(current_user):
+    """Get comprehensive user report"""
+    try:
+        # Get all users with detailed information
+        users = db.session.execute(text("""
+            SELECT 
+                u.id,
+                u.email,
+                u.first_name,
+                u.last_name,
+                u.company,
+                u.phone,
+                u.is_active,
+                u.subscription_status,
+                u.stripe_customer_id,
+                u.created_at,
+                CASE 
+                    WHEN u.created_at > NOW() - INTERVAL '24 hours' THEN 'Last 24h'
+                    WHEN u.created_at > NOW() - INTERVAL '7 days' THEN 'Last 7 days'
+                    WHEN u.created_at > NOW() - INTERVAL '30 days' THEN 'Last 30 days'
+                    ELSE 'Older'
+                END as signup_period,
+                EXTRACT(DAYS FROM NOW() - u.created_at) as days_since_signup,
+                COUNT(v.id) as vehicle_count,
+                COUNT(pr.id) as part_request_count
+            FROM "user" u
+            LEFT JOIN vehicle v ON u.id = v.user_id
+            LEFT JOIN part_request pr ON u.id = pr.user_id
+            GROUP BY u.id, u.email, u.first_name, u.last_name, u.company, u.phone, 
+                     u.is_active, u.subscription_status, u.stripe_customer_id, u.created_at
+            ORDER BY u.created_at DESC
+        """)).fetchall()
+        
+        # Convert to list of dictionaries
+        user_data = []
+        for user in users:
+            user_data.append({
+                'id': user.id,
+                'email': user.email,
+                'name': f"{user.first_name} {user.last_name}",
+                'first_name': user.first_name,
+                'last_name': user.last_name,
+                'company': user.company or 'N/A',
+                'phone': user.phone or 'N/A',
+                'is_active': user.is_active,
+                'subscription_status': user.subscription_status,
+                'stripe_customer_id': user.stripe_customer_id or 'N/A',
+                'created_at': user.created_at.isoformat(),
+                'signup_period': user.signup_period,
+                'days_since_signup': int(user.days_since_signup),
+                'vehicle_count': user.vehicle_count,
+                'part_request_count': user.part_request_count
+            })
+        
+        # Generate summary statistics
+        total_users = len(user_data)
+        active_users = sum(1 for u in user_data if u['is_active'])
+        
+        subscription_stats = {}
+        signup_stats = {}
+        for user in user_data:
+            # Subscription stats
+            status = user['subscription_status']
+            subscription_stats[status] = subscription_stats.get(status, 0) + 1
+            
+            # Signup period stats
+            period = user['signup_period']
+            signup_stats[period] = signup_stats.get(period, 0) + 1
+        
+        return jsonify({
+            'users': user_data,
+            'summary': {
+                'total_users': total_users,
+                'active_users': active_users,
+                'inactive_users': total_users - active_users,
+                'subscription_breakdown': subscription_stats,
+                'signup_periods': signup_stats
+            }
+        })
+        
+    except Exception as e:
+        app.logger.error(f"Error getting user report: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/admin/subscription-report', methods=['GET'])
+@admin_required
+def admin_subscription_report(current_user):
+    """Get detailed subscription analytics"""
+    try:
+        subscription_data = db.session.execute(text("""
+            SELECT 
+                subscription_status,
+                COUNT(*) as user_count,
+                AVG(EXTRACT(DAYS FROM NOW() - created_at)) as avg_days_active,
+                MIN(created_at) as first_signup,
+                MAX(created_at) as latest_signup
+            FROM "user"
+            GROUP BY subscription_status
+            ORDER BY user_count DESC
+        """)).fetchall()
+        
+        report = []
+        for sub in subscription_data:
+            report.append({
+                'subscription_status': sub.subscription_status,
+                'user_count': sub.user_count,
+                'avg_days_active': round(sub.avg_days_active, 1),
+                'first_signup': sub.first_signup.isoformat(),
+                'latest_signup': sub.latest_signup.isoformat()
+            })
+        
+        return jsonify({
+            'subscription_tiers': report,
+            'generated_at': datetime.utcnow().isoformat()
+        })
+        
+    except Exception as e:
+        app.logger.error(f"Error generating subscription report: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/admin/clear-users', methods=['POST'])
+@admin_required
+def admin_clear_users(current_user):
+    """Clear all test users and associated data"""
+    try:
+        data = request.get_json()
+        confirm = data.get('confirm', False)
+        
+        if not confirm:
+            return jsonify({
+                'error': 'Confirmation required',
+                'message': 'Send {"confirm": true} to permanently delete all user data'
+            }), 400
+        
+        # Get counts before deletion
+        user_count = db.session.execute(text("SELECT COUNT(*) FROM \"user\"")).scalar()
+        vehicle_count = db.session.execute(text("SELECT COUNT(*) FROM vehicle")).scalar()
+        part_request_count = db.session.execute(text("SELECT COUNT(*) FROM part_request")).scalar()
+        
+        # Delete in correct order (foreign key constraints)
+        db.session.execute(text("DELETE FROM part_request"))
+        db.session.execute(text("DELETE FROM vehicle"))
+        db.session.execute(text("DELETE FROM \"user\""))
+        
+        # Reset sequences
+        db.session.execute(text("ALTER SEQUENCE user_id_seq RESTART WITH 1"))
+        db.session.execute(text("ALTER SEQUENCE vehicle_id_seq RESTART WITH 1"))
+        db.session.execute(text("ALTER SEQUENCE part_request_id_seq RESTART WITH 1"))
+        
+        db.session.commit()
+        
+        return jsonify({
+            'message': 'All user data cleared successfully',
+            'deleted': {
+                'users': user_count,
+                'vehicles': vehicle_count,
+                'part_requests': part_request_count
+            },
+            'sequences_reset': True,
+            'cleared_at': datetime.utcnow().isoformat()
+        })
+        
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error clearing users: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/admin/fix-subscriptions', methods=['POST'])
+@admin_required
+def admin_fix_subscriptions(current_user):
+    """Fix subscription statuses for users"""
+    try:
+        data = request.get_json()
+        action = data.get('action', 'activate_all')  # 'activate_all' or 'sync_stripe'
+        
+        if action == 'activate_all':
+            # Set all users to active (for testing)
+            result = db.session.execute(text("""
+                UPDATE "user" 
+                SET subscription_status = 'active' 
+                WHERE subscription_status != 'active'
+            """))
+            
+            db.session.commit()
+            
+            return jsonify({
+                'message': f'Updated {result.rowcount} users to active subscription status',
+                'action': 'activate_all',
+                'updated_count': result.rowcount,
+                'updated_at': datetime.utcnow().isoformat()
+            })
+        
+        elif action == 'sync_stripe':
+            # In production, this would sync with Stripe
+            # For now, just return a placeholder
+            return jsonify({
+                'message': 'Stripe sync not implemented yet',
+                'action': 'sync_stripe',
+                'note': 'This would sync subscription statuses with Stripe in production'
+            })
+        
+        else:
+            return jsonify({'error': 'Invalid action. Use "activate_all" or "sync_stripe"'}), 400
+        
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error fixing subscriptions: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/admin/create-test-user', methods=['POST'])
+@admin_required
+def admin_create_test_user(current_user):
+    """Create a test user for development"""
+    try:
+        data = request.get_json()
+        email = data.get('email', 'test@partsquest.com')
+        password = data.get('password', 'testpass123')
+        
+        # Check if user already exists
+        existing_user = User.query.filter_by(email=email).first()
+        if existing_user:
+            return jsonify({
+                'error': 'User already exists',
+                'existing_user': {
+                    'id': existing_user.id,
+                    'email': existing_user.email,
+                    'subscription_status': existing_user.subscription_status
+                }
+            }), 400
+        
+        # Create new test user
+        test_user = User(
+            email=email,
+            first_name='Test',
+            last_name='User',
+            company='Test Company',
+            phone='555-0123',
+            subscription_status='active',
+            is_active=True
+        )
+        test_user.set_password(password)
+        
+        db.session.add(test_user)
+        db.session.commit()
+        
+        return jsonify({
+            'message': 'Test user created successfully',
+            'user': {
+                'id': test_user.id,
+                'email': test_user.email,
+                'password': password,
+                'subscription_status': test_user.subscription_status,
+                'created_at': test_user.created_at.isoformat()
+            }
+        }), 201
+        
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error creating test user: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/admin/health', methods=['GET'])
+def admin_health():
+    """Admin health check endpoint (no auth required)"""
+    try:
+        # Test database connection
+        db.session.execute(text('SELECT 1'))
+        
+        # Get basic stats
+        user_count = db.session.execute(text("SELECT COUNT(*) FROM \"user\"")).scalar()
+        
+        return jsonify({
+            'status': 'healthy',
+            'database': 'connected',
+            'user_count': user_count,
+            'timestamp': datetime.utcnow().isoformat(),
+            'admin_endpoints': [
+                'GET /api/admin/health',
+                'GET /api/admin/users',
+                'GET /api/admin/subscription-report',
+                'POST /api/admin/clear-users',
+                'POST /api/admin/fix-subscriptions',
+                'POST /api/admin/create-test-user'
+            ]
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'status': 'unhealthy',
+            'database': 'error',
+            'error': str(e),
+            'timestamp': datetime.utcnow().isoformat()
+        }), 500
+
+if __name__ == '__main__':
+    with app.app_context():
+        db.create_all()
+    app.run(debug=True, host='0.0.0.0', port=5000)
+
