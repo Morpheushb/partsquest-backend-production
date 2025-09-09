@@ -282,9 +282,14 @@ def enforce_subscription_at_api_level():
     if request.method == 'OPTIONS':
         return
     
-    # List of endpoints that don't need subscription
+    # List of endpoints that don't need subscription (more permissive matching)
     open_endpoints = ['/api/login', '/api/register', '/api/stripe', '/api/profile', '/api/health', '/api/admin']
+    
+    # Debug: Print the request path
+    print(f"🔍 BACKEND DEBUG - Request path: {request.path}")
+    
     if any(request.path.startswith(endpoint) for endpoint in open_endpoints):
+        print(f"✅ BACKEND DEBUG - Allowing access to open endpoint: {request.path}")
         return
     
     # For protected endpoints, verify subscription
