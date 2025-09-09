@@ -275,9 +275,15 @@ def enforce_subscription_at_api_level():
     Global protection against subscription bypass.
     Even if frontend is cached/bypassed, backend will block access.
     """
-    # Skip check for OPTIONS requests (CORS preflight)
+    # CRITICAL: Handle OPTIONS requests FIRST for CORS
     if request.method == 'OPTIONS':
-        return
+        # Return immediately with proper CORS headers
+        response = make_response()
+        response.headers['Access-Control-Allow-Origin'] = 'https://www.partsquest.org'
+        response.headers['Access-Control-Allow-Methods'] = 'DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT'
+        response.headers['Access-Control-Allow-Headers'] = 'authorization, content-type'
+        response.headers['Access-Control-Allow-Credentials'] = 'true'
+        return response
     
     # Skip check for public endpoints
     public_endpoints = [
@@ -308,44 +314,41 @@ def enforce_subscription_at_api_level():
     auth_header = request.headers.get('Authorization')
     if auth_header:
         try:
-            token = auth_header.split(' ')[1]
+            token = auth_header.split(' ')[1]  # Remove 'Bearer ' prefix
         except IndexError:
-            pass
+            return jsonify({"error": "Invalid authorization header format"}), 401
     
     if not token:
-        print(f"🚨 BACKEND PROTECTION - No token for: {request.path}")
-        return jsonify({'error': 'Authentication required'}), 401
+        print(f"🚨 BACKEND PROTECTION - No token provided for: {request.path}")
+        return jsonify({"error": "Authentication required"}), 401
     
     try:
-        data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
-        user = User.query.get(data['user_id'])
+        # Decode the JWT token
+        payload = jwt.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
+        user_id = payload['user_id']
         
+        # Get user from database
+        user = User.query.get(user_id)
         if not user:
-            print(f"🚨 BACKEND PROTECTION - Invalid user for: {request.path}")
-            return jsonify({'error': 'Invalid user'}), 401
+            print(f"🚨 BACKEND PROTECTION - User not found for: {request.path}")
+            return jsonify({"error": "User not found"}), 401
         
-        print(f"🚨 BACKEND PROTECTION - User {user.email} accessing {request.path}")
-        print(f"🚨 BACKEND PROTECTION - Subscription status: {user.subscription_status}")
-        
-        # Block access for non-active users to protected endpoints
+        # Check subscription status
         if user.subscription_status != 'active':
-            print(f"🚨 BACKEND PROTECTION - BLOCKING ACCESS! User has '{user.subscription_status}' status")
-            return jsonify({
-                'error': 'Active subscription required',
-                'subscription_status': user.subscription_status,
-                'message': 'Please upgrade your subscription to access this feature'
-            }), 402  # Payment Required
+            print(f"🚨 BACKEND PROTECTION - User {user.email} has inactive subscription ({user.subscription_status}) for: {request.path}")
+            return jsonify({"error": "Active subscription required"}), 401
         
-        print(f"✅ BACKEND PROTECTION - Access granted to active user")
+        print(f"✅ BACKEND PROTECTION - User {user.email} has active subscription for: {request.path}")
         
     except jwt.ExpiredSignatureError:
         print(f"🚨 BACKEND PROTECTION - Expired token for: {request.path}")
-        return jsonify({'error': 'Token expired'}), 401
+        return jsonify({"error": "Token has expired"}), 401
     except jwt.InvalidTokenError:
         print(f"🚨 BACKEND PROTECTION - Invalid token for: {request.path}")
-        return jsonify({'error': 'Invalid token'}), 401
-
-# Routes
+        return jsonify({"error": "Invalid token"}), 401
+    except Exception as e:
+        print(f"🚨 BACKEND PROTECTION - Error checking subscription for {request.path}: {str(e)}")
+        return jsonify({"error": "Authentication error"}), 401
 @app.route('/')
 def home():
     return jsonify({
