@@ -69,6 +69,7 @@ CORS(app,
      origins=[
          'https://www.partsquest.org',
          'https://partsquest.org',
+         'https://partsquest.vercel.app',  # Current frontend URL
          'https://partsquest-frontend-production.vercel.app',
          'http://localhost:3000',  # For development
          'http://localhost:5000'   # For local testing
@@ -274,7 +275,20 @@ def handle_preflight():
     # Handle CORS preflight requests first
     if request.method == 'OPTIONS':
         response = make_response()
-        response.headers.add('Access-Control-Allow-Origin', 'https://www.partsquest.org')
+        # Allow all configured origins for preflight
+        origin = request.headers.get('Origin')
+        allowed_origins = [
+            'https://www.partsquest.org',
+            'https://partsquest.org', 
+            'https://partsquest.vercel.app',
+            'https://partsquest-frontend-production.vercel.app',
+            'http://localhost:3000',
+            'http://localhost:5000'
+        ]
+        if origin in allowed_origins:
+            response.headers.add('Access-Control-Allow-Origin', origin)
+        else:
+            response.headers.add('Access-Control-Allow-Origin', 'https://www.partsquest.org')
         response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
         response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
         response.headers.add('Access-Control-Allow-Credentials', 'true')
@@ -282,14 +296,31 @@ def handle_preflight():
     
     # Skip authentication for public endpoints
     public_endpoints = [
+        '/',  # Root endpoint
         '/api/health',
         '/api/register',
         '/api/login',
         '/api/stripe/webhook',
-        '/api/stripe/create-checkout-session',
-        '/api/stripe/create-single-search-session',
-        '/api/stripe/config',
-        '/api/profile'  # Temporarily public to fix circular dependency
+        '/api/stripe/create-single-search-session',  # Public payment endpoint
+        '/api/stripe/config',  # Public config endpoint
+    ]
+    
+    # Check if current path matches any public endpoint exactly
+    if request.path in public_endpoints:
+        return
+    
+    # For all other API endpoints, authentication will be handled by individual route decorators
+    return response
+    
+    # Skip authentication for public endpoints
+    public_endpoints = [
+        '/',  # Root endpoint
+        '/api/health',
+        '/api/register',
+        '/api/login',
+        '/api/stripe/webhook',
+        '/api/stripe/create-single-search-session',  # Public payment endpoint
+        '/api/stripe/config',  # Public config endpoint
     ]
     
     # Check if current path starts with any public endpoint
