@@ -284,7 +284,11 @@ def enforce_subscription_at_api_level():
         '/api/login', '/api/register', '/api/health', 
         '/api/admin/check-users', '/api/admin/fix-subscription-status',
         '/api/admin/health',  # Admin health check (no auth required)
-        '/api/stripe/webhook',                        # Webhooks don't use auth tokens
+        '/api/stripe/create-checkout-session',        # CRITICAL: Allow Stripe payments
+        '/api/stripe/create-single-search-session',   # CRITICAL: Allow Single Search payments
+        '/api/stripe/config',                         # CRITICAL: Allow Stripe config
+        '/api/stripe/webhook',                        # CRITICAL: Allow Stripe webhooks
+        '/api/profile',                               # CRITICAL: Allow profile access after registration
         '/', '/favicon.ico'
     ]
     
