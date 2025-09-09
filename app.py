@@ -269,10 +269,10 @@ def check_vehicle_limit(user):
     
     return vehicle_count < limit, vehicle_count, limit
 
-# NUCLEAR BACKEND PROTECTION - Block revenue leak at API level
+# MINIMAL CORS HANDLER - Nuclear protection temporarily disabled
 @app.before_request
-def handle_preflight():
-    # Handle CORS preflight requests first
+def handle_cors():
+    # Handle CORS preflight requests
     if request.method == 'OPTIONS':
         response = make_response()
         # Allow all configured origins for preflight
@@ -288,11 +288,14 @@ def handle_preflight():
         if origin in allowed_origins:
             response.headers.add('Access-Control-Allow-Origin', origin)
         else:
-            response.headers.add('Access-Control-Allow-Origin', 'https://www.partsquest.org')
+            response.headers.add('Access-Control-Allow-Origin', '*')
         response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
         response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
         response.headers.add('Access-Control-Allow-Credentials', 'true')
         return response
+    
+    # No authentication blocking - let individual routes handle their own auth
+    return response
     
     # Skip authentication for public endpoints
     public_endpoints = [
