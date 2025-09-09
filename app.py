@@ -647,26 +647,6 @@ def stripe_webhook():
 
 
 # Settings Management Endpoints
-@app.route('/api/settings', methods=['GET'])
-def get_settings():
-    """Get user settings"""
-    try:
-        # In production, get user_id from JWT token
-        user_id = request.headers.get('X-User-ID', 'default_user')
-        
-        settings = load_user_settings(user_id)
-        
-        return jsonify({
-            'success': True,
-            'settings': settings
-        })
-        
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
 @app.route('/api/settings', methods=['PUT'])
 def update_settings():
     """Update user settings"""
