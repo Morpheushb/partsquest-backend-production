@@ -9,6 +9,7 @@ import stripe
 import os
 from datetime import datetime, timedelta
 import jwt
+from flask_jwt_extended import jwt_required
 from functools import wraps
 
 # Import Sentry for error monitoring
