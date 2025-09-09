@@ -272,41 +272,22 @@ def check_vehicle_limit(user):
 @app.before_request
 def enforce_subscription_at_api_level():
     """
-    Global protection against subscription bypass.
-    Even if frontend is cached/bypassed, backend will block access.
+    Simplified protection - only check protected endpoints
     """
-    # CRITICAL: Handle OPTIONS requests FIRST for CORS
-    if request.method == 'OPTIONS':
-        # Return immediately with proper CORS headers
-        response = make_response()
-        response.headers['Access-Control-Allow-Origin'] = 'https://www.partsquest.org'
-        response.headers['Access-Control-Allow-Methods'] = 'DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT'
-        response.headers['Access-Control-Allow-Headers'] = 'authorization, content-type'
-        response.headers['Access-Control-Allow-Credentials'] = 'true'
-        return response
-    
-    # Skip check for public endpoints
-    public_endpoints = [
-        '/api/login', '/api/register', '/api/health', 
-        '/api/admin/check-users', '/api/admin/fix-subscription-status',
-        '/api/admin/health',  # Admin health check (no auth required)
-        '/api/stripe/create-checkout-session',        # CRITICAL: Allow Stripe payments
-        '/api/stripe/create-single-search-session',   # CRITICAL: Allow Single Search payments
-        '/api/stripe/config',                         # CRITICAL: Allow Stripe config
-        '/api/stripe/webhook',                        # CRITICAL: Allow Stripe webhooks
-        '/api/profile',                               # CRITICAL: Allow profile access after registration
-        '/', '/favicon.ico'
-    ]
-    
-    # Skip if accessing public endpoint
-    if request.path in public_endpoints:
-        return
-    
-    # Skip if not an API endpoint
+    # Only check API endpoints
     if not request.path.startswith('/api/'):
         return
     
-    # For all protected API endpoints, verify subscription
+    # Handle OPTIONS requests for CORS
+    if request.method == 'OPTIONS':
+        return
+    
+    # List of endpoints that don't need subscription
+    open_endpoints = ['/api/login', '/api/register', '/api/stripe', '/api/profile', '/api/health', '/api/admin']
+    if any(request.path.startswith(endpoint) for endpoint in open_endpoints):
+        return
+    
+    # For protected endpoints, verify subscription
     print(f"🚨 BACKEND PROTECTION - Checking access to: {request.path}")
     
     # Get current user from token
