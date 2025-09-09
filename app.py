@@ -578,6 +578,40 @@ def create_checkout_session(current_user):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+
+@app.route('/api/stripe/create-single-search-session', methods=['POST'])
+def create_single_search_session():
+    """Create Stripe checkout session for Single Search ($39 one-time payment)"""
+    try:
+        data = request.get_json()
+        
+        # Get Stripe price ID for Single Search from environment
+        price_id = os.environ.get('STRIPE_SINGLE_SEARCH_PRICE_ID')
+        if not price_id:
+            return jsonify({'error': 'Single Search price ID not configured'}), 500
+        
+        # Create checkout session
+        session = stripe.checkout.Session.create(
+            payment_method_types=['card'],
+            line_items=[{
+                'price': price_id,
+                'quantity': 1,
+            }],
+            mode='payment',  # One-time payment
+            success_url=data.get('success_url', 'https://www.partsquest.org/success'),
+            cancel_url=data.get('cancel_url', 'https://www.partsquest.org/cancel'),
+            metadata={
+                'type': 'single_search',
+                'user_id': data.get('user_id', ''),
+            }
+        )
+        
+        return jsonify({'sessionId': session.id})
+        
+    except Exception as e:
+        print(f"❌ Single Search session creation error: {e}")
+        return jsonify({'error': 'Failed to create checkout session'}), 500
+
 @app.route('/api/stripe/webhook', methods=['POST'])
 def stripe_webhook():
     payload = request.get_data()
@@ -1158,7 +1192,7 @@ def oem_lookup_stats(current_user):
     except Exception as e:
         print(f"❌ OEM Stats error: {e}")
         return jsonify({'error': 'Internal server error getting OEM stats'}), 500
-if __name__ == '__main__':
+
 if __name__ == '__main__':
     # Create tables if they don't exist
     with app.app_context():
@@ -1168,6 +1202,9 @@ if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
 else:
+    # For production deployment (Gunicorn)
+    with app.app_context():
+        db.create_all()
     # For production deployment (Gunicorn)
     with app.app_context():
         db.create_all()
@@ -2216,7 +2253,11 @@ def process_voice_calling_optimized(session_id):
         print(f"❌ Error in optimized voice calling process: {e}")
         session['status'] = 'error'
         session['current_supplier'] = ''
-\n\n@app.route('/api/voice-calling/start-vapi', methods=['POST'])\n@token_required\ndef start_voice_calling_with_vapi(current_user):
+
+
+@app.route('/api/voice-calling/start-vapi', methods=['POST'])
+@token_required
+def start_voice_calling_with_vapi(current_user):
     """Start AI voice calling process using real Vapi integration"""
     try:
         data = request.get_json()
@@ -2252,11 +2293,6 @@ def process_voice_calling_optimized(session_id):
         
         # Start the Vapi calling process asynchronously
         import threading
-
-# New integrations
-from sentry_config import init_sentry
-from nhtsa_service import nhtsa_api
-from marketcheck_service import marketcheck_api
 
         thread = threading.Thread(target=process_voice_calling_with_vapi, args=(session_id,))
         thread.daemon = True
