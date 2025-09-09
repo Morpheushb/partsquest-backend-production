@@ -1,9 +1,5 @@
 from flask import Flask, request, jsonify, make_response
 # OEM Lookup Service
-import sys
-sys.path.append('/home/ubuntu')
-from oem_lookup_mock_service import MockOEMLookupService
-import asyncio
 
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import text
@@ -80,7 +76,6 @@ CORS(app,
 )
 
 # Initialize OEM Lookup Service
-oem_service = MockOEMLookupService()
 print("✅ OEM Lookup Service initialized")
 
 # Stripe configuration
@@ -1103,106 +1098,7 @@ def test_voice():
         }), 500
 
 
-@app.route('/api/oem-lookup', methods=['POST'])
-@token_required
-def oem_lookup(current_user):
-    """
-    OEM part number lookup endpoint
-    """
-    try:
-        data = request.get_json()
-        
-        # Validate required fields
-        if not data.get('description'):
-            return jsonify({'error': 'Part description is required'}), 400
-        
-        if not data.get('vehicle_data'):
-            return jsonify({'error': 'Vehicle data is required'}), 400
-        
-        vehicle_data = data['vehicle_data']
-        required_fields = ['year', 'make']
-        for field in required_fields:
-            if not vehicle_data.get(field):
-                return jsonify({'error': f'Vehicle {field} is required'}), 400
-        
-        # Perform OEM lookup
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-        try:
-            result = loop.run_until_complete(
-                oem_service.lookup_oem_part(data['description'], vehicle_data)
-            )
-        finally:
-            loop.close()
-        
-        # Convert result to dictionary for JSON response
-        response_data = result.to_dict()
-        
-        # Log the lookup for analytics
-        print(f"🔍 OEM Lookup: {data['description']} for {vehicle_data.get('year')} {vehicle_data.get('make')} {vehicle_data.get('model')}")
-        print(f"   Result: {result.success}, Confidence: {result.confidence:.2f}")
-        
-        return jsonify(response_data)
-        
-    except Exception as e:
-        print(f"❌ OEM Lookup error: {e}")
-        return jsonify({'error': 'Internal server error during OEM lookup'}), 500
 
-@app.route('/api/oem-lookup/test', methods=['GET'])
-@token_required
-def oem_lookup_test(current_user):
-    """
-    Test OEM lookup endpoint with sample data
-    """
-    try:
-        # Test with sample data
-        test_description = "brake pads"
-        test_vehicle = {'year': 2020, 'make': 'Honda', 'model': 'Accord'}
-        
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-        try:
-            result = loop.run_until_complete(
-                oem_service.lookup_oem_part(test_description, test_vehicle)
-            )
-        finally:
-            loop.close()
-        
-        response_data = result.to_dict()
-        response_data['test_data'] = {
-            'description': test_description,
-            'vehicle': test_vehicle
-        }
-        
-        return jsonify(response_data)
-        
-    except Exception as e:
-        print(f"❌ OEM Lookup test error: {e}")
-        return jsonify({'error': 'Internal server error during OEM lookup test'}), 500
-
-@app.route('/api/oem-lookup/stats', methods=['GET'])
-@token_required
-def oem_lookup_stats(current_user):
-    """
-    Get OEM lookup service statistics
-    """
-    try:
-        stats = {
-            'service_status': 'active',
-            'cache_size': len(oem_service.cache),
-            'supported_makes': ['Honda', 'Toyota', 'Ford', 'BMW', 'Mercedes-Benz'],
-            'supported_parts': ['brake pads', 'oil filter', 'air filter', 'spark plugs'],
-            'average_confidence': 0.92,
-            'average_lookup_time': 1.2
-        }
-        
-        return jsonify(stats)
-        
-    except Exception as e:
-        print(f"❌ OEM Stats error: {e}")
-        return jsonify({'error': 'Internal server error getting OEM stats'}), 500
 
 if __name__ == '__main__':
     # Create tables if they don't exist
