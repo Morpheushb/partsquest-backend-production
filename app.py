@@ -283,8 +283,8 @@ def handle_preflight():
     # Skip authentication for public endpoints
     public_endpoints = [
         '/api/health',
-        '/api/auth/register',
-        '/api/auth/login',
+        '/api/register',
+        '/api/login',
         '/api/stripe/webhook',
         '/api/stripe/create-checkout-session',
         '/api/stripe/create-single-search-session',
