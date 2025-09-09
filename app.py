@@ -606,7 +606,7 @@ def create_single_search_session():
             }
         )
         
-        return jsonify({'sessionId': session.id})
+        return jsonify({'checkout_url': session.url})
         
     except Exception as e:
         print(f"❌ Single Search session creation error: {e}")
