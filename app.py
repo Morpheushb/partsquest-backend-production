@@ -202,18 +202,30 @@ def token_required(f):
     def decorated(*args, **kwargs):
         token = request.headers.get('Authorization')
         if not token:
-            return jsonify({'error': 'Token is missing'}), 401
+            response = jsonify({'error': 'Token is missing'})
+            response.status_code = 401
+            response.headers['Access-Control-Allow-Origin'] = 'https://www.partsquest.org'
+            response.headers['Access-Control-Allow-Credentials'] = 'true'
+            return response
         
         if token.startswith('Bearer '):
             token = token[7:]
         
         user_id = verify_token(token)
         if not user_id:
-            return jsonify({'error': 'Token is invalid or expired'}), 401
+            response = jsonify({'error': 'Token is invalid or expired'})
+            response.status_code = 401
+            response.headers['Access-Control-Allow-Origin'] = 'https://www.partsquest.org'
+            response.headers['Access-Control-Allow-Credentials'] = 'true'
+            return response
         
         current_user = User.query.get(user_id)
         if not current_user:
-            return jsonify({'error': 'User not found'}), 401
+            response = jsonify({'error': 'User not found'})
+            response.status_code = 401
+            response.headers['Access-Control-Allow-Origin'] = 'https://www.partsquest.org'
+            response.headers['Access-Control-Allow-Credentials'] = 'true'
+            return response
         
         return f(current_user, *args, **kwargs)
     return decorated
@@ -272,10 +284,7 @@ def enforce_subscription_at_api_level():
         '/api/login', '/api/register', '/api/health', 
         '/api/admin/check-users', '/api/admin/fix-subscription-status',
         '/api/admin/health',  # Admin health check (no auth required)
-        '/api/stripe/create-checkout-session',        # CRITICAL: Allow Stripe payments
-        '/api/stripe/create-single-search-session',   # CRITICAL: Allow Single Search payments
-        '/api/stripe/config',                         # CRITICAL: Allow Stripe config
-        '/api/stripe/webhook',                        # CRITICAL: Allow Stripe webhooks
+        '/api/stripe/webhook',                        # Webhooks don't use auth tokens
         '/', '/favicon.ico'
     ]
     
