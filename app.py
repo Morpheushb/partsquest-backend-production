@@ -2183,25 +2183,6 @@ def get_vehicle_years():
     years = nhtsa_api.get_years()
     return jsonify({'years': years})
 
-@app.route('/api/vehicles/decode-vin', methods=['POST'])
-def decode_vin():
-    """Decode VIN to get vehicle information"""
-    data = request.get_json()
-    vin = data.get('vin', '').strip()
-    
-    if not vin:
-        return jsonify({'error': 'VIN is required'}), 400
-    
-    # Try NHTSA first, then MarketCheck
-    vehicle_info = nhtsa_api.decode_vin(vin)
-    if not vehicle_info:
-        vehicle_info = marketcheck_api.decode_vin(vin)
-    
-    if vehicle_info:
-        return jsonify({'vehicle': vehicle_info})
-    else:
-        return jsonify({'error': 'Could not decode VIN'}), 404
-
 # MarketCheck Dealership API Endpoints
 @app.route('/api/dealerships/by-make', methods=['GET'])
 def get_dealerships_by_make():
