@@ -272,69 +272,15 @@ def check_vehicle_limit(user):
 @app.before_request
 def enforce_subscription_at_api_level():
     """
-    Simplified protection - only check protected endpoints
+    TEMPORARILY DISABLED - Debugging endpoint URL issues
     """
-    # Only check API endpoints
-    if not request.path.startswith('/api/'):
-        return
-    
     # Handle OPTIONS requests for CORS
     if request.method == 'OPTIONS':
         return
     
-    # List of endpoints that don't need subscription (more permissive matching)
-    open_endpoints = ['/api/login', '/api/register', '/api/stripe', '/api/profile', '/api/health', '/api/admin']
-    
-    # Debug: Print the request path
-    print(f"🔍 BACKEND DEBUG - Request path: {request.path}")
-    
-    if any(request.path.startswith(endpoint) for endpoint in open_endpoints):
-        print(f"✅ BACKEND DEBUG - Allowing access to open endpoint: {request.path}")
-        return
-    
-    # For protected endpoints, verify subscription
-    print(f"🚨 BACKEND PROTECTION - Checking access to: {request.path}")
-    
-    # Get current user from token
-    token = None
-    auth_header = request.headers.get('Authorization')
-    if auth_header:
-        try:
-            token = auth_header.split(' ')[1]  # Remove 'Bearer ' prefix
-        except IndexError:
-            return jsonify({"error": "Invalid authorization header format"}), 401
-    
-    if not token:
-        print(f"🚨 BACKEND PROTECTION - No token provided for: {request.path}")
-        return jsonify({"error": "Authentication required"}), 401
-    
-    try:
-        # Decode the JWT token
-        payload = jwt.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
-        user_id = payload['user_id']
-        
-        # Get user from database
-        user = User.query.get(user_id)
-        if not user:
-            print(f"🚨 BACKEND PROTECTION - User not found for: {request.path}")
-            return jsonify({"error": "User not found"}), 401
-        
-        # Check subscription status
-        if user.subscription_status != 'active':
-            print(f"🚨 BACKEND PROTECTION - User {user.email} has inactive subscription ({user.subscription_status}) for: {request.path}")
-            return jsonify({"error": "Active subscription required"}), 401
-        
-        print(f"✅ BACKEND PROTECTION - User {user.email} has active subscription for: {request.path}")
-        
-    except jwt.ExpiredSignatureError:
-        print(f"🚨 BACKEND PROTECTION - Expired token for: {request.path}")
-        return jsonify({"error": "Token has expired"}), 401
-    except jwt.InvalidTokenError:
-        print(f"🚨 BACKEND PROTECTION - Invalid token for: {request.path}")
-        return jsonify({"error": "Invalid token"}), 401
-    except Exception as e:
-        print(f"🚨 BACKEND PROTECTION - Error checking subscription for {request.path}: {str(e)}")
-        return jsonify({"error": "Authentication error"}), 401
+    # TEMPORARILY ALLOW ALL API ACCESS FOR DEBUGGING
+    print(f"🔍 BACKEND DEBUG - Request path: {request.path} - ALLOWING ACCESS")
+    return
 @app.route('/')
 def home():
     return jsonify({
