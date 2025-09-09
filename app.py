@@ -1035,48 +1035,6 @@ def get_settings():
             'error': str(e)
         }), 500
 
-@app.route('/api/settings', methods=['PUT'])
-def update_settings():
-    """Update user settings"""
-    try:
-        user_id = request.headers.get('X-User-ID', 'default_user')
-        new_settings = request.json
-        
-        # In production, save to database
-        # For now, just return success
-        
-        return jsonify({
-            'success': True,
-            'message': 'Settings updated successfully'
-        })
-            
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-@app.route('/api/voice/test', methods=['POST'])
-def test_voice():
-    """Test voice synthesis"""
-    try:
-        data = request.json
-        voice_id = data.get('voiceId')
-        text = data.get('text', 'This is a test.')
-        speed = data.get('speed', 1.0)
-        
-        # Mock response for now
-        return jsonify({
-            'success': True,
-            'message': f'Voice test completed for {voice_id} at {speed}x speed'
-        })
-        
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
 
 
 
