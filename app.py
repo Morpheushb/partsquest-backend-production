@@ -263,6 +263,10 @@ def enforce_subscription_at_api_level():
     Global protection against subscription bypass.
     Even if frontend is cached/bypassed, backend will block access.
     """
+    # Skip check for OPTIONS requests (CORS preflight)
+    if request.method == 'OPTIONS':
+        return
+    
     # Skip check for public endpoints
     public_endpoints = [
         '/api/login', '/api/register', '/api/health', 
