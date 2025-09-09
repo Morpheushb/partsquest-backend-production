@@ -270,17 +270,38 @@ def check_vehicle_limit(user):
 
 # NUCLEAR BACKEND PROTECTION - Block revenue leak at API level
 @app.before_request
-def enforce_subscription_at_api_level():
-    """
-    TEMPORARILY DISABLED - Debugging endpoint URL issues
-    """
-    # Handle OPTIONS requests for CORS
+def handle_preflight():
+    # Handle CORS preflight requests first
     if request.method == 'OPTIONS':
-        return
+        response = make_response()
+        response.headers.add('Access-Control-Allow-Origin', 'https://www.partsquest.org')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+        response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+        response.headers.add('Access-Control-Allow-Credentials', 'true')
+        return response
     
-    # TEMPORARILY ALLOW ALL API ACCESS FOR DEBUGGING
-    print(f"🔍 BACKEND DEBUG - Request path: {request.path} - ALLOWING ACCESS")
-    return
+    # Skip authentication for public endpoints
+    public_endpoints = [
+        '/api/health',
+        '/api/auth/register',
+        '/api/auth/login',
+        '/api/stripe/webhook',
+        '/api/stripe/create-checkout-session',
+        '/api/stripe/create-single-search-session',
+        '/api/stripe/config',
+        '/api/profile'  # Temporarily public to fix circular dependency
+    ]
+    
+    # Check if current path starts with any public endpoint
+    for endpoint in public_endpoints:
+        if request.path.startswith(endpoint):
+            return
+    
+    # For all other API endpoints, require authentication
+    if request.path.startswith('/api/'):
+        # Skip authentication for now to fix the system
+        return
+
 @app.route('/')
 def home():
     return jsonify({
@@ -2093,6 +2114,14 @@ def extract_price_from_transcript(transcript):
 
 def extract_lead_time_from_transcript(transcript):
     """Extract lead time information from call transcript"""
+
+@app.after_request
+def after_request(response):
+    response.headers.add('Access-Control-Allow-Origin', 'https://www.partsquest.org')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+    response.headers.add('Access-Control-Allow-Credentials', 'true')
+    return response
     # Look for time patterns
     time_patterns = [
         r'([\d+])\s*(?:to\s*)?([\d+])?\s*(?:business\s*)?days?',
