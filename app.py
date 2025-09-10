@@ -201,8 +201,6 @@ def token_required(f):
         if not token:
             response = jsonify({'error': 'Token is missing'})
             response.status_code = 401
-            response.headers['Access-Control-Allow-Origin'] = 'https://www.partsquest.org'
-            response.headers['Access-Control-Allow-Credentials'] = 'true'
             return response
         
         if token.startswith('Bearer '):
@@ -212,16 +210,12 @@ def token_required(f):
         if not user_id:
             response = jsonify({'error': 'Token is invalid or expired'})
             response.status_code = 401
-            response.headers['Access-Control-Allow-Origin'] = 'https://www.partsquest.org'
-            response.headers['Access-Control-Allow-Credentials'] = 'true'
             return response
         
         current_user = User.query.get(user_id)
         if not current_user:
             response = jsonify({'error': 'User not found'})
             response.status_code = 401
-            response.headers['Access-Control-Allow-Origin'] = 'https://www.partsquest.org'
-            response.headers['Access-Control-Allow-Credentials'] = 'true'
             return response
         
         return f(current_user, *args, **kwargs)
