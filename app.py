@@ -555,21 +555,26 @@ def create_checkout_session(current_user):
             return jsonify({'error': 'Plan or price_id is required'}), 400
         
         # Create checkout session
-        checkout_session = stripe.checkout.Session.create(
-            customer=current_user.stripe_customer_id,
-            payment_method_types=['card'],
-            line_items=[{
+        session_params = {
+            'payment_method_types': ['card'],
+            'line_items': [{
                 'price': stripe_price_id,
                 'quantity': 1,
             }],
-            mode=payment_mode,
-            success_url=request.host_url + 'success?session_id={CHECKOUT_SESSION_ID}',
-            cancel_url=request.host_url + 'cancel',
-            metadata={
+            'mode': payment_mode,
+            'success_url': request.host_url + 'success?session_id={CHECKOUT_SESSION_ID}',
+            'cancel_url': request.host_url + 'cancel',
+            'metadata': {
                 'user_id': str(current_user.id),
                 'plan': plan or 'custom'
             }
-        )
+        }
+        
+        # Only add customer if stripe_customer_id exists
+        if hasattr(current_user, 'stripe_customer_id') and current_user.stripe_customer_id:
+            session_params['customer'] = current_user.stripe_customer_id
+        
+        checkout_session = stripe.checkout.Session.create(**session_params)
         
         return jsonify({
             'checkout_url': checkout_session.url,
