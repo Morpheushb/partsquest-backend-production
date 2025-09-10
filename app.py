@@ -1983,14 +1983,6 @@ def extract_price_from_transcript(transcript):
 
 def extract_lead_time_from_transcript(transcript):
     """Extract lead time information from call transcript"""
-
-@app.after_request
-def after_request(response):
-    response.headers.add('Access-Control-Allow-Origin', 'https://www.partsquest.org')
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
-    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
-    response.headers.add('Access-Control-Allow-Credentials', 'true')
-    return response
     # Look for time patterns
     time_patterns = [
         r'([\d+])\s*(?:to\s*)?([\d+])?\s*(?:business\s*)?days?',
