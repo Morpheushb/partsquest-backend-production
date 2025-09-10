@@ -285,7 +285,7 @@ def handle_cors():
         return response
     
     # No authentication blocking - let individual routes handle their own auth
-    return response
+    # For non-OPTIONS requests, continue processing normally
     
     # Skip authentication for public endpoints
     public_endpoints = [
