@@ -11,7 +11,7 @@ app = Flask(__name__)
 
 # Configure CORS
 CORS(app, 
-     origins=["https://partsquest-frontend-production.vercel.app", "http://localhost:3000"],
+     origins=["https://partsquest-frontend-production.vercel.app", "http://localhost:3000", "https://www.partsquest.org", "https://partsquest.org"],
      methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
      allow_headers=["Content-Type", "Authorization"],
      supports_credentials=True)
