@@ -303,7 +303,7 @@ def handle_cors():
         return
     
     # For all other API endpoints, authentication will be handled by individual route decorators
-    return response
+    return
     
     # Skip authentication for public endpoints
     public_endpoints = [
