@@ -68,6 +68,7 @@ CORS(app,
          'https://partsquest.org',
          'https://partsquest.vercel.app',  # Current frontend URL
          'https://partsquest-frontend-production.vercel.app',
+         'https://partsquest-fresh-git-v2-preview-parts-quest.vercel.app',  # V2 Preview
          'http://localhost:3000',  # For development
          'http://localhost:5000'   # For local testing
      ],
@@ -272,6 +273,7 @@ def handle_cors():
             'https://partsquest.org', 
             'https://partsquest.vercel.app',
             'https://partsquest-frontend-production.vercel.app',
+            'https://partsquest-fresh-git-v2-preview-parts-quest.vercel.app',  # V2 Preview
             'http://localhost:3000',
             'http://localhost:5000'
         ]
